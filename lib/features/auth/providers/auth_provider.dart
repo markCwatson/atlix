@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/user_model.dart';
-import '../services/auth_service.dart';
+import 'package:monyx/features/auth/models/user_model.dart';
+import 'package:monyx/features/auth/services/auth_service.dart';
 
 // ── Service provider ──────────────────────────────────────────────────────────
 

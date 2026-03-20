@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/theme/app_theme.dart';
-import '../models/ballistic_solution.dart';
+import 'package:monyx/../core/theme/app_theme.dart';
+import 'package:monyx/features/ballistics/models/ballistic_solution.dart';
 
 /// Primary field-use ballistic solution display.
 ///

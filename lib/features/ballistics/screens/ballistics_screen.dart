@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/geo_utils.dart';
-import '../../../map/providers/map_provider.dart';
-import '../../../profiles/providers/profile_provider.dart';
-import '../../../weather/providers/weather_provider.dart';
-import '../models/ballistic_input.dart';
-import '../providers/ballistics_provider.dart';
-import '../widgets/solution_card.dart';
+import 'package:monyx/../core/theme/app_theme.dart';
+import 'package:monyx/../core/utils/geo_utils.dart';
+import 'package:monyx/map/providers/map_provider.dart';
+import 'package:monyx/profiles/providers/profile_provider.dart';
+import 'package:monyx/weather/providers/weather_provider.dart';
+import 'package:monyx/features/ballistics/models/ballistic_input.dart';
+import 'package:monyx/features/ballistics/providers/ballistics_provider.dart';
+import 'package:monyx/features/ballistics/widgets/solution_card.dart';
 
 class BallisticsScreen extends ConsumerStatefulWidget {
   const BallisticsScreen({super.key});

@@ -3,9 +3,9 @@ import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/map_pin.dart';
-import '../models/map_state.dart';
-import '../services/location_service.dart';
+import 'package:monyx/features/map/models/map_pin.dart';
+import 'package:monyx/features/map/models/map_state.dart';
+import 'package:monyx/features/map/services/location_service.dart';
 
 // ── Location stream provider ──────────────────────────────────────────────────
 

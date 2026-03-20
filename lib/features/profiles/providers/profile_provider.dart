@@ -2,7 +2,7 @@ import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/rifle_profile.dart';
+import 'package:monyx/features/profiles/models/rifle_profile.dart';
 
 // ── Profiles list notifier ────────────────────────────────────────────────────
 

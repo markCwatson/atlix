@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/weather_data.dart';
-import '../services/weather_service.dart';
+import 'package:monyx/features/weather/models/weather_data.dart';
+import 'package:monyx/features/weather/services/weather_service.dart';
 
 // ── Service ───────────────────────────────────────────────────────────────────
 

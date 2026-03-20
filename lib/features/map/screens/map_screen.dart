@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/geo_utils.dart';
-import '../../../profiles/providers/profile_provider.dart';
-import '../../../weather/providers/weather_provider.dart';
-import '../models/map_pin.dart';
-import '../providers/map_provider.dart';
+import 'package:monyx/../core/theme/app_theme.dart';
+import 'package:monyx/../core/utils/geo_utils.dart';
+import 'package:monyx/profiles/providers/profile_provider.dart';
+import 'package:monyx/weather/providers/weather_provider.dart';
+import 'package:monyx/features/map/models/map_pin.dart';
+import 'package:monyx/features/map/providers/map_provider.dart';
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});

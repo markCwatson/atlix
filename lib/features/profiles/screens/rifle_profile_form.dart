@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme/app_theme.dart';
-import '../models/rifle_profile.dart';
-import '../providers/profile_provider.dart';
+import 'package:monyx/../core/theme/app_theme.dart';
+import 'package:monyx/features/profiles/models/rifle_profile.dart';
+import 'package:monyx/features/profiles/providers/profile_provider.dart';
 
 /// Form for creating or editing a [RifleProfile].
 class RifleProfileForm extends ConsumerStatefulWidget {

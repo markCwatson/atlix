@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
-import '../models/ballistic_input.dart';
-import '../models/ballistic_solution.dart';
+import 'package:monyx/features/ballistics/models/ballistic_input.dart';
+import 'package:monyx/features/ballistics/models/ballistic_solution.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // G1 Standard Drag Table

@@ -3,8 +3,8 @@ import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 
-import '../../../../core/constants/app_constants.dart';
-import '../models/weather_data.dart';
+import 'package:monyx/../core/constants/app_constants.dart';
+import 'package:monyx/features/weather/models/weather_data.dart';
 
 /// Fetches current weather from the Open-Meteo free API and computes
 /// density altitude for ballistic correction.

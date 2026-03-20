@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/app_theme.dart';
+import 'package:monyx/core/theme/app_theme.dart';
 
 /// Styled error display widget.
 class AppErrorWidget extends StatelessWidget {

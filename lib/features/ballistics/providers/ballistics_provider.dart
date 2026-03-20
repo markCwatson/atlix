@@ -1,14 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/constants/app_constants.dart';
-import '../../../core/utils/geo_utils.dart';
-import '../../map/providers/map_provider.dart';
-import '../../profiles/providers/profile_provider.dart';
-import '../../weather/providers/weather_provider.dart';
-import '../models/ballistic_input.dart';
-import '../models/ballistic_result_state.dart';
-import '../models/ballistic_solution.dart';
-import '../solver/ballistic_solver.dart';
+import 'package:monyx/core/constants/app_constants.dart';
+import 'package:monyx/core/utils/geo_utils.dart';
+import 'package:monyx/features/map/providers/map_provider.dart';
+import 'package:monyx/features/profiles/providers/profile_provider.dart';
+import 'package:monyx/features/weather/providers/weather_provider.dart';
+import 'package:monyx/features/ballistics/models/ballistic_input.dart';
+import 'package:monyx/features/ballistics/models/ballistic_result_state.dart';
+import 'package:monyx/features/ballistics/models/ballistic_solution.dart';
+import 'package:monyx/features/ballistics/solver/ballistic_solver.dart';
 
 // ── Solver provider (singleton) ───────────────────────────────────────────────
 

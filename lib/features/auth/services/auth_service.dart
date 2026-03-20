@@ -4,7 +4,7 @@ import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-import '../models/user_model.dart';
+import 'package:monyx/features/auth/models/user_model.dart';
 
 /// Key names used in secure storage.
 class _StorageKeys {

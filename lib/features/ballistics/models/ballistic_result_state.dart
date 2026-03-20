@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 
-import '../models/ballistic_solution.dart';
+import 'package:monyx/features/ballistics/models/ballistic_solution.dart';
 
 /// State for the ballistics UI.
 @immutable

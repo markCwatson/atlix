@@ -1,4 +1,4 @@
-import '../../profiles/models/rifle_profile.dart';
+import 'package:monyx/features/profiles/models/rifle_profile.dart';
 
 /// All inputs required for a ballistic calculation.
 class BallisticInput {
