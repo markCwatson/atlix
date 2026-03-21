@@ -32,23 +32,32 @@ class _MapScreenState extends State<MapScreen> {
   final Map<String, ShotSolution> _lineSolutions = {};
   final Map<String, _AnnotationGroup> _annotationGroups = {};
   BannerAd? _bannerAd;
+  StreamSubscription<SubscriptionState>? _subSub;
 
   @override
   void initState() {
     super.initState();
     _initLocation();
     // Only load ads for free-tier users
-    final subState = context.read<SubscriptionCubit>().state;
-    if (subState is! SubscriptionPro) {
+    final subCubit = context.read<SubscriptionCubit>();
+    if (subCubit.state is! SubscriptionPro) {
       // Defer ad loading until after the first frame so MediaQuery is available
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _loadBannerAd();
       });
     }
+    // Listen for subscription changes to hide ads after purchase
+    _subSub = subCubit.stream.listen((state) {
+      if (state is SubscriptionPro && _bannerAd != null) {
+        _bannerAd!.dispose();
+        if (mounted) setState(() => _bannerAd = null);
+      }
+    });
   }
 
   @override
   void dispose() {
+    _subSub?.cancel();
     _bannerAd?.dispose();
     super.dispose();
   }
