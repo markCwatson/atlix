@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:image_picker/image_picker.dart';
@@ -15,6 +16,7 @@ import '../blocs/track_cubit.dart';
 import '../models/shot_solution.dart';
 import '../models/track_result.dart';
 import '../services/ad_service.dart';
+import '../widgets/compass_overlay.dart';
 import '../widgets/solution_card.dart';
 import 'profile_list_screen.dart';
 import 'saved_tracks_screen.dart';
@@ -39,11 +41,19 @@ class _MapScreenState extends State<MapScreen> {
   final Map<String, _AnnotationGroup> _annotationGroups = {};
   BannerAd? _bannerAd;
   StreamSubscription<SubscriptionState>? _subSub;
+  bool _compassEnabled = false;
+  double? _heading;
+  StreamSubscription<CompassEvent>? _compassSub;
 
   @override
   void initState() {
     super.initState();
     _initLocation();
+    _compassSub = FlutterCompass.events?.listen((event) {
+      if (mounted && event.heading != null) {
+        setState(() => _heading = event.heading);
+      }
+    });
     // Only load ads for free-tier users
     final subCubit = context.read<SubscriptionCubit>();
     if (subCubit.state is! SubscriptionPro) {
@@ -63,6 +73,7 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
+    _compassSub?.cancel();
     _subSub?.cancel();
     _bannerAd?.dispose();
     super.dispose();
@@ -139,9 +150,14 @@ class _MapScreenState extends State<MapScreen> {
   void _onMapCreated(MapboxMap map) async {
     _mapboxMap = map;
 
-    // Enable user location puck
+    // Enable user location puck with bearing indicator
     await map.location.updateSettings(
-      LocationComponentSettings(enabled: true, pulsingEnabled: true),
+      LocationComponentSettings(
+        enabled: true,
+        pulsingEnabled: true,
+        puckBearingEnabled: true,
+        puckBearing: PuckBearing.HEADING,
+      ),
     );
 
     // Set up annotation managers for target pins and line
@@ -459,12 +475,18 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ),
 
-                // Zoom controls + my location (right side)
+                // Compass overlay
+                if (_compassEnabled && _heading != null)
+                  CompassOverlay(heading: _heading!),
+
+                // Zoom controls + compass + my location (right side)
                 Positioned(
                   right: 12,
                   bottom: MediaQuery.of(context).padding.bottom + 5,
                   child: Column(
                     children: [
+                      _compassButton(),
+                      const SizedBox(height: 8),
                       _mapButton(Icons.my_location, _flyToUser),
                       const SizedBox(height: 8),
                       _mapButton(Icons.add, _zoomIn),
@@ -556,6 +578,35 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _compassButton() {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: FloatingActionButton(
+        heroTag: 'compass',
+        mini: true,
+        backgroundColor: _compassEnabled ? Colors.orangeAccent : Colors.black87,
+        onPressed: () {
+          if (_heading == null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Compass not available on this device'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            return;
+          }
+          setState(() => _compassEnabled = !_compassEnabled);
+        },
+        child: Icon(
+          Icons.explore,
+          color: _compassEnabled ? Colors.black : Colors.white,
+          size: 20,
+        ),
       ),
     );
   }
