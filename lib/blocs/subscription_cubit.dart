@@ -48,6 +48,11 @@ class SubscriptionCubit extends Cubit<SubscriptionState> {
 
   /// Call after SubscriptionService.init() completes.
   Future<void> load() async {
+    // todo: uncomment this for a DEMO BUILD: forces Pro for all users
+    // emit(const SubscriptionPro());
+    // return;
+
+    // todo: use this for normal build
     _sub = _service.statusStream.listen((isPro) {
       if (isPro) {
         emit(const SubscriptionPro());
@@ -79,7 +84,7 @@ class SubscriptionCubit extends Cubit<SubscriptionState> {
     }
   }
 
-  bool get isPro => state is SubscriptionPro;
+  bool get isPro => true; // DEMO BUILD: always Pro
 
   @override
   Future<void> close() {
