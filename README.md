@@ -417,14 +417,14 @@ Banner ads are shown at the bottom of the map screen for free-tier users.
 
 | Item           | Value                                                  |
 | -------------- | ------------------------------------------------------ |
-| **Product ID** | `monyx_pro_monthly`                                    |
+| **Product ID** | `monyx_pro_monthly_2`                                  |
 | **Type**       | Auto-renewable subscription, 1 month                   |
 | **Price**      | $4.99/mo (configure in App Store Connect)              |
 | **Benefits**   | No ads, unlimited rifle/ammo profiles, animal track ID |
 
 The subscription is managed by `SubscriptionService` → `SubscriptionCubit`. Free users see a single profile, a banner ad, and no track ID access. Pro users see a profile list, no ads, and full access to animal track identification.
 
-**For production**, the subscription is configured in **App Store Connect** — you create the product there with the same product ID (`monyx_pro_monthly`), set the price, and submit for review. The app code talks to the real App Store automatically; no code changes are needed.
+**For production**, the subscription is configured in **App Store Connect** — you create the product there with the same product ID (`monyx_pro_monthly_2`), set the price, and submit for review. The app code talks to the real App Store automatically; no code changes are needed.
 
 ### Testing Subscriptions Locally (Xcode StoreKit)
 
@@ -443,7 +443,7 @@ The StoreKit config file must be created inside Xcode (hand-authored JSON won't 
 4. In the visual editor, click **+** → **Add Auto-Renewable Subscription**:
    - **Group name**: `Monyx Pro`
    - **Reference Name**: `Monyx Pro Monthly`
-   - **Product ID**: `monyx_pro_monthly` ← must match exactly
+   - **Product ID**: `monyx_pro_monthly_2` ← must match exactly
    - **Price**: `2.99`
    - **Duration**: `1 Month`
    - Add a display name/description in the Localization section.

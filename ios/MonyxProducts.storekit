@@ -57,7 +57,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "monyx_pro_monthly",
+          "productID" : "monyx_pro_monthly_2",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Monyx Pro Monthly",
           "subscriptionGroupID" : "70F0B329",
