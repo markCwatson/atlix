@@ -40,4 +40,17 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
   end
+
+  # Keep TensorFlowLiteC symbols visible to Dart FFI's dlsym() at runtime.
+  # KeepTfLiteSymbols.m provides compile-time references so the linker includes
+  # them. DEAD_CODE_STRIPPING=NO prevents the linker from removing unreachable
+  # code paths within the static library, and STRIP_STYLE=non-global keeps the
+  # global symbols in the nlist after stripping. Together these ensure dlsym()
+  # can resolve TfLite* symbols in the running process.
+  app_project = installer.aggregate_targets.first.user_project
+  runner = app_project.native_targets.find { |t| t.name == 'Runner' }
+  runner.build_configurations.each do |config|
+    config.build_settings['STRIP_STYLE'] = 'non-global'
+  end
+  app_project.save
 end
