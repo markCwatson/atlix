@@ -277,7 +277,7 @@ $HOME/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android
 Each upload requires a unique build number. Increment the `+N` portion in `pubspec.yaml`:
 
 ```yaml
-version: 1.0.0+3    # +N must be higher than the last uploaded build
+version: 1.0.0+3 # +N must be higher than the last uploaded build
 ```
 
 ### 2. Build the release archive
@@ -333,12 +333,16 @@ lib/
     profile_screen.dart         — Rifle/ammo profile form (create/edit)
     track_result_screen.dart    — Full-screen track ID results (annotated image + species list)
     saved_tracks_screen.dart    — List of saved track identification results
+    plant_result_screen.dart    — Full-screen plant ID results (photo + species list)
+    saved_plants_screen.dart    — List of saved plant identification results
   models/
     rifle_profile.dart          — Rifle + ammo data classes + JSON
     weather_data.dart           — Open-Meteo response model
     shot_solution.dart          — Solver output model
     detection.dart              — Single YOLO bounding-box detection
     track_result.dart           — Saved track identification result
+    plant_result.dart           — PlantPart enum, PlantPrediction, PlantResult
+    plant_metadata.dart         — Species metadata model for reranking
   ballistics/
     drag_tables.dart            — G1/G7 Cd-vs-Mach tables + PCHIP spline interpolation
     atmosphere.dart             — CIPM-2007 air density, speed of sound, lapse-rate AtmoState
@@ -352,11 +356,16 @@ lib/
     subscription_service.dart   — In-app purchase wrapper (StoreKit / Google Play)
     track_detector.dart         — On-device YOLOv11 TFLite inference engine
     track_service.dart          — Hive persistence for saved track results
+    plant_classifier.dart       — On-device EfficientNet-Lite0 TFLite classifier
+    plant_service.dart          — Hive persistence for saved plant results
+    plant_reranker.dart         — Metadata-based reranking (region, season, part)
+    region_lookup.dart          — Offline GPS → US state / CA province lookup
   blocs/
     profile_cubit.dart          — Profile load/save/switch state (multi-profile)
     solution_cubit.dart         — Shot solution computation state
     subscription_cubit.dart     — Free/Pro subscription state
     track_cubit.dart            — Track identification flow state
+    plant_cubit.dart            — Plant identification flow state
   widgets/
     solution_card.dart          — Bottom sheet with corrections
     detection_image_painter.dart — Bounding-box overlay painter for track photos
@@ -366,9 +375,16 @@ assets/
     feces_det_float16.tflite     — YOLOv11n feces detector (101 species, ~10 MB)
     footprint_classes.json       — Footprint class-name mapping
     feces_classes.json           — Feces class-name mapping
+    plant_classifier_float16.tflite — EfficientNet-Lite0 plant classifier (~5–15 MB)
+    plant_classes.json           — Plant species class-name mapping
+    plant_metadata.json          — Species metadata (regions, months, parts, toxicity)
 tools/
   export_models.py              — Download + convert YOLO models to TFLite
-  requirements.txt              — Python dependencies for model export
+  build_plant_dataset.py        — Download iNaturalist plant images
+  build_plant_metadata.py       — Build species metadata for reranking
+  train_plant_classifier.py     — Train EfficientNet-Lite0 classifier
+  export_plant_classifier.py    — Export trained model to TFLite
+  requirements.txt              — Python dependencies for model export + training
 ios/
   MonyxProducts.storekit        — Xcode StoreKit test configuration
 test/
@@ -377,7 +393,7 @@ test/
 
 ## Monetisation
 
-The app is free with ads (AdMob). A "Monyx Pro" monthly subscription removes ads and unlocks unlimited rifle/ammo profiles.
+The app is free with ads (AdMob). A "Monyx Pro" monthly subscription removes ads and unlocks additional features.
 
 ### Ads (Google AdMob)
 
@@ -517,3 +533,50 @@ python tools/export_models.py
 | Results UI  | `lib/screens/track_result_screen.dart`     | Annotated image + ranked species list                        |
 | Saved list  | `lib/screens/saved_tracks_screen.dart`     | Browse and revisit past identifications                      |
 | Overlay     | `lib/widgets/detection_image_painter.dart` | Draws bounding boxes on the photo                            |
+
+## Plant Identification
+
+Pro subscribers can identify plant species from photos — entirely on-device, no internet required. Supports US and Canada species.
+
+### How it works
+
+1. Tap the **🌿 button** on the map screen (Pro only).
+2. Choose the plant part: **Leaf** 🍃, **Flower** 🌸, **Bark** 🌳, **Fruit** 🍎, or **Whole Plant** 🌿.
+3. Take a photo or choose one from gallery.
+4. Monyx runs an EfficientNet-Lite0 classifier on-device.
+5. Results are **reranked** using your GPS location (US state / Canadian province), current month, and selected plant part.
+6. A **results page** shows the photo and a ranked list of species predictions with confidence scores, common names, and scientific names.
+7. Results can be **saved** and **retrieved** later.
+
+### Model
+
+| Model | Species | Input       | Size     | Architecture       |
+| ----- | ------- | ----------- | -------- | ------------------ |
+| Plant | 200–500 | 224×224 RGB | ~5–15 MB | EfficientNet-Lite0 |
+
+The model is trained on iNaturalist research-grade observations filtered to US + Canada plants. See [tools/README.md](tools/README.md) for the full training and export pipeline.
+
+### Phase 2: Metadata Reranking
+
+Raw classifier predictions are reranked using bundled species metadata:
+
+- **Region**: species present in user's state/province get a 1.5× boost; absent species get 0.2×
+- **Season**: species visible in the current month get 1.3×; off-season species get 0.5×
+- **Plant part**: species with strong identifiers for the selected part get 1.2×
+
+Formula: `finalScore = modelScore × regionWeight × seasonWeight × partWeight`
+
+Region lookup is fully offline — uses a bundled US state / Canadian province bounding-box table.
+
+### Architecture
+
+| Component   | File                                   | Role                                                         |
+| ----------- | -------------------------------------- | ------------------------------------------------------------ |
+| Classifier  | `lib/services/plant_classifier.dart`   | Loads TFLite model, runs classification, returns predictions |
+| Reranker    | `lib/services/plant_reranker.dart`     | Metadata-based reranking (region, season, plant part)        |
+| Region      | `lib/services/region_lookup.dart`      | Offline GPS → US state / CA province resolver                |
+| Persistence | `lib/services/plant_service.dart`      | Saves/loads plant results + images via Hive                  |
+| State       | `lib/blocs/plant_cubit.dart`           | Manages capture → classify → rerank → save flow              |
+| Results UI  | `lib/screens/plant_result_screen.dart` | Photo + ranked species list with confidence bars             |
+| Saved list  | `lib/screens/saved_plants_screen.dart` | Browse and revisit past identifications                      |
+| Metadata    | `lib/models/plant_metadata.dart`       | Species metadata model (regions, months, parts, toxicity)    |

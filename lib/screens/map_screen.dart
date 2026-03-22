@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -12,13 +14,19 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart'
 import '../blocs/profile_cubit.dart';
 import '../blocs/solution_cubit.dart';
 import '../blocs/subscription_cubit.dart';
+import '../blocs/plant_cubit.dart';
 import '../blocs/track_cubit.dart';
+import '../models/plant_result.dart';
+import '../models/poi.dart';
 import '../models/shot_solution.dart';
 import '../models/track_result.dart';
 import '../services/ad_service.dart';
+import '../services/poi_service.dart';
 import '../widgets/compass_overlay.dart';
 import '../widgets/solution_card.dart';
+import 'plant_result_screen.dart';
 import 'profile_list_screen.dart';
+import 'saved_plants_screen.dart';
 import 'saved_tracks_screen.dart';
 import 'track_result_screen.dart';
 
@@ -43,7 +51,14 @@ class _MapScreenState extends State<MapScreen> {
   StreamSubscription<SubscriptionState>? _subSub;
   bool _compassEnabled = false;
   double? _heading;
+  double? _magnetHeading;
+  double? _gpsHeading;
+  double _speed = 0;
   StreamSubscription<CompassEvent>? _compassSub;
+  StreamSubscription<geo.Position>? _positionSub;
+  PointAnnotationManager? _poiManager;
+  final PoiService _poiService = PoiService();
+  final Map<String, Poi> _poiAnnotations = {};
 
   @override
   void initState() {
@@ -51,9 +66,33 @@ class _MapScreenState extends State<MapScreen> {
     _initLocation();
     _compassSub = FlutterCompass.events?.listen((event) {
       if (mounted && event.heading != null) {
-        setState(() => _heading = event.heading);
+        _magnetHeading = event.heading;
+        // Use magnetometer when stationary (speed < 2 m/s)
+        if (_speed < 2) {
+          setState(() => _heading = _magnetHeading);
+          _updateMapBearing();
+        }
       }
     });
+    // GPS bearing stream for compass while moving
+    _positionSub =
+        geo.Geolocator.getPositionStream(
+          locationSettings: const geo.LocationSettings(
+            accuracy: geo.LocationAccuracy.high,
+            distanceFilter: 5,
+          ),
+        ).listen((pos) {
+          if (!mounted) return;
+          _speed = pos.speed;
+          _userLat = pos.latitude;
+          _userLon = pos.longitude;
+          // Use GPS bearing when moving (speed >= 2 m/s) and bearing is valid
+          if (_speed >= 2 && pos.heading >= 0) {
+            _gpsHeading = pos.heading;
+            setState(() => _heading = _gpsHeading);
+            _updateMapBearing();
+          }
+        });
     // Only load ads for free-tier users
     final subCubit = context.read<SubscriptionCubit>();
     if (subCubit.state is! SubscriptionPro) {
@@ -74,6 +113,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void dispose() {
     _compassSub?.cancel();
+    _positionSub?.cancel();
     _subSub?.cancel();
     _bannerAd?.dispose();
     super.dispose();
@@ -142,9 +182,15 @@ class _MapScreenState extends State<MapScreen> {
       CameraOptions(
         center: Point(coordinates: Position(_userLon!, _userLat!)),
         zoom: 15.0,
+        bearing: _compassEnabled && _heading != null ? _heading! : null,
       ),
       MapAnimationOptions(duration: 1500),
     );
+  }
+
+  void _updateMapBearing() {
+    if (!_compassEnabled || _heading == null || _mapboxMap == null) return;
+    _mapboxMap!.setCamera(CameraOptions(bearing: _heading!));
   }
 
   void _onMapCreated(MapboxMap map) async {
@@ -164,6 +210,14 @@ class _MapScreenState extends State<MapScreen> {
     _annotationManager = await map.annotations.createPointAnnotationManager();
     _lineManager = await map.annotations.createPolylineAnnotationManager();
     _labelManager = await map.annotations.createPointAnnotationManager();
+    _poiManager = await map.annotations.createPointAnnotationManager();
+    _poiManager?.tapEvents(
+      onTap: (annotation) {
+        if (!mounted) return;
+        final poi = _poiAnnotations[annotation.id];
+        if (poi != null) _showPoiDetail(poi, annotation.id);
+      },
+    );
     _lineManager?.tapEvents(
       onTap: (annotation) {
         if (!mounted) return;
@@ -176,6 +230,115 @@ class _MapScreenState extends State<MapScreen> {
 
     // If location already arrived before map was created, fly now
     if (_locationReady) _flyToUser();
+
+    // Register custom POI pin images
+    await _registerPoiIcons();
+
+    // Load saved POIs
+    await _loadSavedPois();
+  }
+
+  Future<void> _registerPoiIcons() async {
+    for (final type in PoiType.values) {
+      final bytes = await _renderPoiPin(type);
+      await _mapboxMap!.style.addStyleImage(
+        'poi-${type.name}',
+        2.0,
+        MbxImage(width: 128, height: 160, data: bytes),
+        false,
+        [],
+        [],
+        null,
+      );
+    }
+  }
+
+  Future<Uint8List> _renderPoiPin(PoiType type) async {
+    const int w = 128, h = 160;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+    );
+    final color = _poiColor(type);
+
+    // Combined pin shape: rounded rect body merged with triangle pointer
+    final pinPaint = Paint()..color = color;
+    const double bodyTop = 4;
+    const double bodyBottom = 104;
+    const double bodyLeft = 8;
+    const double bodyRight = 120;
+    const double r = 24; // corner radius
+    const double tipY = 148;
+    const double tipX = 64;
+
+    final pin = Path()
+      // Start at top-left after corner
+      ..moveTo(bodyLeft + r, bodyTop)
+      // Top edge
+      ..lineTo(bodyRight - r, bodyTop)
+      // Top-right corner
+      ..arcToPoint(
+        const Offset(bodyRight, bodyTop + r),
+        radius: const Radius.circular(r),
+      )
+      // Right edge
+      ..lineTo(bodyRight, bodyBottom - r)
+      // Bottom-right corner
+      ..arcToPoint(
+        const Offset(bodyRight - r, bodyBottom),
+        radius: const Radius.circular(r),
+      )
+      // Bottom edge to right side of pointer
+      ..lineTo(tipX + 20, bodyBottom)
+      // Pointer tip
+      ..lineTo(tipX, tipY)
+      ..lineTo(tipX - 20, bodyBottom)
+      // Bottom edge to left side
+      ..lineTo(bodyLeft + r, bodyBottom)
+      // Bottom-left corner
+      ..arcToPoint(
+        Offset(bodyLeft, bodyBottom - r),
+        radius: const Radius.circular(r),
+      )
+      // Left edge
+      ..lineTo(bodyLeft, bodyTop + r)
+      // Top-left corner
+      ..arcToPoint(
+        Offset(bodyLeft + r, bodyTop),
+        radius: const Radius.circular(r),
+      )
+      ..close();
+
+    canvas.drawPath(pin, pinPaint);
+
+    // Dark outline
+    final outlinePaint = Paint()
+      ..color = Colors.black54
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3;
+    canvas.drawPath(pin, outlinePaint);
+
+    // Icon inside pin
+    final icon = _poiIcon(type);
+    final tp = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontSize: 56,
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          color: Colors.white,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset((w - tp.width) / 2, (108 - tp.height) / 2));
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(w, h);
+    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+    return byteData!.buffer.asUint8List();
   }
 
   Future<void> _zoomIn() async {
@@ -299,6 +462,257 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  void _onMapTap(MapContentGestureContext gesture) {
+    final point = gesture.point;
+    final lat = point.coordinates.lat.toDouble();
+    final lon = point.coordinates.lng.toDouble();
+    _showPoiTypePicker(lat, lon);
+  }
+
+  void _showPoiTypePicker(double lat, double lon) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Drop Pin',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ...PoiType.values.map(
+                  (type) => _poiTypeOption(ctx, type, lat, lon),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _poiTypeOption(
+    BuildContext ctx,
+    PoiType type,
+    double lat,
+    double lon,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: ListTile(
+        leading: Icon(_poiIcon(type), color: _poiColor(type)),
+        title: Text(type.label, style: const TextStyle(color: Colors.white)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        tileColor: Colors.grey[800],
+        onTap: () {
+          Navigator.pop(ctx);
+          if (type == PoiType.custom) {
+            _showCustomPinNameDialog(lat, lon);
+          } else {
+            _dropPoiPin(type, lat, lon);
+          }
+        },
+      ),
+    );
+  }
+
+  void _showCustomPinNameDialog(double lat, double lon) {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.grey[850],
+        title: const Text('Custom Pin', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Enter pin name',
+            hintStyle: const TextStyle(color: Colors.white38),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.grey[600]!),
+            ),
+            focusedBorder: const UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.orangeAccent),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white54),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              Navigator.pop(ctx);
+              _dropPoiPin(
+                PoiType.custom,
+                lat,
+                lon,
+                note: name.isNotEmpty ? name : null,
+              );
+            },
+            child: const Text(
+              'Drop Pin',
+              style: TextStyle(color: Colors.orangeAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _dropPoiPin(
+    PoiType type,
+    double lat,
+    double lon, {
+    String? note,
+  }) async {
+    final poi = Poi(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      type: type,
+      latitude: lat,
+      longitude: lon,
+      timestamp: DateTime.now(),
+      note: note,
+    );
+
+    await _poiService.save(poi);
+    await _addPoiAnnotation(poi);
+  }
+
+  Future<void> _addPoiAnnotation(Poi poi) async {
+    final label = poi.note ?? poi.type.label;
+    final annotation = await _poiManager?.create(
+      PointAnnotationOptions(
+        geometry: Point(coordinates: Position(poi.longitude, poi.latitude)),
+        iconImage: 'poi-${poi.type.name}',
+        iconSize: 0.8,
+        iconAnchor: IconAnchor.BOTTOM,
+        textField: label,
+        textSize: 11,
+        textColor: Colors.white.toARGB32(),
+        textHaloColor: Colors.black.toARGB32(),
+        textHaloWidth: 1.0,
+        textAnchor: TextAnchor.TOP,
+        textOffset: [0.0, 0.5],
+      ),
+    );
+    if (annotation != null) {
+      _poiAnnotations[annotation.id] = poi;
+    }
+  }
+
+  Future<void> _loadSavedPois() async {
+    final pois = await _poiService.loadAll();
+    for (final poi in pois) {
+      await _addPoiAnnotation(poi);
+    }
+  }
+
+  void _showPoiDetail(Poi poi, String annotationId) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(_poiIcon(poi.type), color: _poiColor(poi.type), size: 40),
+              const SizedBox(height: 12),
+              Text(
+                poi.note ?? poi.type.label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              if (poi.note != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  poi.type.label,
+                  style: const TextStyle(color: Colors.white54, fontSize: 14),
+                ),
+              ],
+              const SizedBox(height: 4),
+              Text(
+                '${poi.latitude.toStringAsFixed(5)}, ${poi.longitude.toStringAsFixed(5)}',
+                style: const TextStyle(color: Colors.white54, fontSize: 13),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red[700],
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 48),
+                ),
+                icon: const Icon(Icons.delete),
+                label: const Text('Delete Pin'),
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  await _poiService.delete(poi.id);
+                  final entry = _poiAnnotations.entries
+                      .where((e) => e.value.id == poi.id)
+                      .firstOrNull;
+                  if (entry != null) {
+                    // Remove the annotation from the map by its manager ID
+                    _poiManager?.deleteAll();
+                    _poiAnnotations.clear();
+                    await _loadSavedPois();
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _poiIcon(PoiType type) => switch (type) {
+    PoiType.campsite => Icons.cabin,
+    PoiType.treeStand => Icons.nature,
+    PoiType.trailCam => Icons.videocam,
+    PoiType.waterSource => Icons.water_drop,
+    PoiType.foodPlot => Icons.grass,
+    PoiType.parking => Icons.local_parking,
+    PoiType.custom => Icons.place,
+  };
+
+  Color _poiColor(PoiType type) => switch (type) {
+    PoiType.campsite => Colors.orangeAccent,
+    PoiType.treeStand => Colors.green,
+    PoiType.trailCam => Colors.lightBlue,
+    PoiType.waterSource => Colors.blue,
+    PoiType.foodPlot => Colors.lime,
+    PoiType.parking => Colors.grey,
+    PoiType.custom => Colors.white,
+  };
+
   void _deleteEntry(String lineId) {
     final group = _annotationGroups.remove(lineId);
     if (group != null) {
@@ -345,6 +759,7 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                   styleUri: MapboxStyles.SATELLITE_STREETS,
                   onMapCreated: _onMapCreated,
+                  onTapListener: _onMapTap,
                   onLongTapListener: _onMapLongTap,
                 ),
 
@@ -415,63 +830,122 @@ class _MapScreenState extends State<MapScreen> {
                       color: Colors.black54,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Text(
-                      'Long-press to drop pin',
-                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'Long press for ballistics calc',
+                          style: TextStyle(color: Colors.white60, fontSize: 12),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Short press to drop pin',
+                          style: TextStyle(color: Colors.white60, fontSize: 12),
+                        ),
+                      ],
                     ),
                   ),
                 ),
 
-                // Track ID button (left side)
+                // ID buttons + history (left side)
                 Positioned(
                   left: 12,
                   bottom: MediaQuery.of(context).padding.bottom + 5,
-                  child: BlocConsumer<TrackCubit, TrackState>(
-                    listenWhen: (prev, curr) =>
-                        (curr is TrackDone &&
-                            !curr.saved &&
-                            prev is! TrackDone) ||
-                        curr is TrackError,
-                    listener: (context, state) {
-                      if (state is TrackDone) {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => BlocProvider.value(
-                              value: context.read<TrackCubit>(),
-                              child: TrackResultScreen(result: state.result),
-                            ),
-                          ),
-                        );
-                      } else if (state is TrackError) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(state.message),
-                            backgroundColor: Colors.red[700],
-                          ),
-                        );
-                      }
-                    },
-                    builder: (context, trackState) {
-                      final isPro = context.watch<SubscriptionCubit>().isPro;
-                      final isDetecting = trackState is TrackDetecting;
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _trackIdButton(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Plant ID
+                      BlocConsumer<PlantCubit, PlantState>(
+                        listenWhen: (prev, curr) =>
+                            (curr is PlantDone &&
+                                !curr.saved &&
+                                prev is! PlantDone) ||
+                            curr is PlantError,
+                        listener: (context, state) {
+                          if (state is PlantDone) {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => BlocProvider.value(
+                                  value: context.read<PlantCubit>(),
+                                  child: PlantResultScreen(
+                                    result: state.result,
+                                  ),
+                                ),
+                              ),
+                            );
+                          } else if (state is PlantError) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(state.message),
+                                backgroundColor: Colors.red[700],
+                              ),
+                            );
+                          }
+                        },
+                        builder: (context, plantState) {
+                          final isPro = context
+                              .watch<SubscriptionCubit>()
+                              .isPro;
+                          final isClassifying = plantState is PlantClassifying;
+                          return _plantIdButton(
+                            isPro: isPro,
+                            isClassifying: isClassifying,
+                            onTap: () => isPro
+                                ? _showPlantPartPicker(context)
+                                : _showUpgradeSheet(context),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      // Track ID
+                      BlocConsumer<TrackCubit, TrackState>(
+                        listenWhen: (prev, curr) =>
+                            (curr is TrackDone &&
+                                !curr.saved &&
+                                prev is! TrackDone) ||
+                            curr is TrackError,
+                        listener: (context, state) {
+                          if (state is TrackDone) {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => BlocProvider.value(
+                                  value: context.read<TrackCubit>(),
+                                  child: TrackResultScreen(
+                                    result: state.result,
+                                  ),
+                                ),
+                              ),
+                            );
+                          } else if (state is TrackError) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(state.message),
+                                backgroundColor: Colors.red[700],
+                              ),
+                            );
+                          }
+                        },
+                        builder: (context, trackState) {
+                          final isPro = context
+                              .watch<SubscriptionCubit>()
+                              .isPro;
+                          final isDetecting = trackState is TrackDetecting;
+                          return _trackIdButton(
                             isPro: isPro,
                             isDetecting: isDetecting,
                             onTap: () => isPro
                                 ? _showTraceTypePicker(context)
                                 : _showUpgradeSheet(context),
-                          ),
-                          const SizedBox(height: 8),
-                          _mapButton(
-                            Icons.history,
-                            () => _openSavedTracks(context),
-                          ),
-                        ],
-                      );
-                    },
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      // Shared history
+                      _mapButton(
+                        Icons.history,
+                        () => _showHistoryPicker(context),
+                      ),
+                    ],
                   ),
                 ),
 
@@ -601,6 +1075,15 @@ class _MapScreenState extends State<MapScreen> {
             return;
           }
           setState(() => _compassEnabled = !_compassEnabled);
+          if (!_compassEnabled) {
+            // Reset map to north-up when leaving compass mode
+            _mapboxMap?.flyTo(
+              CameraOptions(bearing: 0),
+              MapAnimationOptions(duration: 300),
+            );
+          } else {
+            _updateMapBearing();
+          }
         },
         child: Icon(
           Icons.explore,
@@ -691,7 +1174,7 @@ class _MapScreenState extends State<MapScreen> {
               const SizedBox(height: 16),
               _traceOption(
                 context: ctx,
-                emoji: '🐾',
+                icon: Icons.pets,
                 label: 'Footprint',
                 subtitle: '117 species',
                 traceType: TraceType.footprint,
@@ -699,7 +1182,7 @@ class _MapScreenState extends State<MapScreen> {
               const SizedBox(height: 8),
               _traceOption(
                 context: ctx,
-                emoji: '💩',
+                icon: Icons.blur_circular,
                 label: 'Scat / Feces',
                 subtitle: '101 species',
                 traceType: TraceType.feces,
@@ -735,7 +1218,7 @@ class _MapScreenState extends State<MapScreen> {
 
   Widget _traceOption({
     required BuildContext context,
-    required String emoji,
+    required IconData icon,
     required String label,
     required String subtitle,
     required TraceType traceType,
@@ -749,8 +1232,8 @@ class _MapScreenState extends State<MapScreen> {
       ),
       child: Row(
         children: [
-          Text(emoji, style: const TextStyle(fontSize: 28)),
-          const SizedBox(width: 16),
+          Icon(icon, color: Colors.orangeAccent, size: 28),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -860,6 +1343,195 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  Widget _plantIdButton({
+    required bool isPro,
+    required bool isClassifying,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: FloatingActionButton(
+        heroTag: 'plant_id',
+        mini: true,
+        backgroundColor: isPro ? Colors.black87 : Colors.grey[800],
+        onPressed: isClassifying ? null : onTap,
+        child: isClassifying
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.green,
+                ),
+              )
+            : Stack(
+                alignment: Alignment.center,
+                children: [
+                  Icon(
+                    Icons.local_florist,
+                    color: isPro ? Colors.green : Colors.white38,
+                    size: 20,
+                  ),
+                  if (!isPro)
+                    const Positioned(
+                      right: -2,
+                      bottom: -2,
+                      child: Icon(Icons.lock, color: Colors.white54, size: 10),
+                    ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  void _showPlantPartPicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Identify Plant',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _plantPartOption(
+                  context: ctx,
+                  icon: Icons.eco,
+                  label: 'Leaf',
+                  plantPart: PlantPart.leaf,
+                ),
+                const SizedBox(height: 8),
+                _plantPartOption(
+                  context: ctx,
+                  icon: Icons.local_florist,
+                  label: 'Flower',
+                  plantPart: PlantPart.flower,
+                ),
+                const SizedBox(height: 8),
+                _plantPartOption(
+                  context: ctx,
+                  icon: Icons.park,
+                  label: 'Bark',
+                  plantPart: PlantPart.bark,
+                ),
+                const SizedBox(height: 8),
+                _plantPartOption(
+                  context: ctx,
+                  icon: Icons.apple,
+                  label: 'Fruit',
+                  plantPart: PlantPart.fruit,
+                ),
+                const SizedBox(height: 8),
+                _plantPartOption(
+                  context: ctx,
+                  icon: Icons.grass,
+                  label: 'Whole Plant',
+                  plantPart: PlantPart.wholePlant,
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () => _openSavedPlants(ctx),
+                  child: const Text(
+                    'View Saved Plants',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _startPlantCapture(
+    BuildContext sheetContext,
+    PlantPart plantPart,
+    ImageSource source,
+  ) {
+    Navigator.pop(sheetContext);
+    context.read<PlantCubit>().capture(
+      plantPart,
+      source: source,
+      latitude: _userLat,
+      longitude: _userLon,
+    );
+  }
+
+  Widget _plantPartOption({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required PlantPart plantPart,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.grey[800],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.green, size: 28),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: () =>
+                _startPlantCapture(context, plantPart, ImageSource.camera),
+            icon: const Icon(Icons.camera_alt, color: Colors.green),
+            tooltip: 'Camera',
+          ),
+          IconButton(
+            onPressed: () =>
+                _startPlantCapture(context, plantPart, ImageSource.gallery),
+            icon: const Icon(Icons.photo_library, color: Colors.green),
+            tooltip: 'Photos',
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openSavedPlants(BuildContext context) {
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).popUntil((route) => route is! PopupRoute);
+    Navigator.of(this.context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider.value(
+          value: this.context.read<PlantCubit>(),
+          child: const SavedPlantsScreen(),
+        ),
+      ),
+    );
+  }
+
   void _openSavedTracks(BuildContext context) {
     // Dismiss any open bottom sheet first
     Navigator.of(
@@ -871,6 +1543,59 @@ class _MapScreenState extends State<MapScreen> {
         builder: (_) => BlocProvider.value(
           value: this.context.read<TrackCubit>(),
           child: const SavedTracksScreen(),
+        ),
+      ),
+    );
+  }
+
+  void _showHistoryPicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Saved History',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(Icons.pets, color: Colors.orangeAccent),
+                title: const Text(
+                  'Animal Tracks',
+                  style: TextStyle(color: Colors.white),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white38,
+                ),
+                onTap: () => _openSavedTracks(ctx),
+              ),
+              ListTile(
+                leading: const Icon(Icons.local_florist, color: Colors.green),
+                title: const Text(
+                  'Plant IDs',
+                  style: TextStyle(color: Colors.white),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white38,
+                ),
+                onTap: () => _openSavedPlants(ctx),
+              ),
+            ],
+          ),
         ),
       ),
     );

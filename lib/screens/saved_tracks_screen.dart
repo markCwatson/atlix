@@ -145,7 +145,9 @@ class _TrackTile extends StatelessWidget {
     final conf = topDet != null
         ? '${(topDet.confidence * 100).toStringAsFixed(0)}%'
         : '';
-    final emoji = result.traceType == TraceType.footprint ? '🐾' : '💩';
+    final traceIcon = result.traceType == TraceType.footprint
+        ? Icons.pets
+        : Icons.blur_circular;
     final time = _formatTime(result.timestamp);
 
     return ListTile(
@@ -162,12 +164,21 @@ class _TrackTile extends StatelessWidget {
                 ),
         ),
       ),
-      title: Text(
-        '$emoji $species',
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w500,
-        ),
+      title: Row(
+        children: [
+          Icon(traceIcon, color: Colors.orangeAccent, size: 18),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              species,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w500,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
       subtitle: Text(
         '$conf  •  $time',

@@ -66,8 +66,117 @@ The script downloads the weights from HuggingFace (requires internet), converts 
 
 ## Files
 
-| File               | Purpose                                              |
-| ------------------ | ---------------------------------------------------- |
-| `export_models.py` | Main script — downloads, converts, and copies models |
-| `requirements.txt` | Pinned Python dependencies for reproducible builds   |
-| `.venv/`           | Python virtual environment (gitignored)              |
+| File                         | Purpose                                                     |
+| ---------------------------- | ----------------------------------------------------------- |
+| `export_models.py`           | Track detector — downloads, converts, and copies models     |
+| `build_plant_dataset.py`     | Plant classifier — curates dataset from iNaturalist         |
+| `build_plant_metadata.py`    | Plant classifier — generates species metadata for reranking |
+| `train_plant_classifier.py`  | Plant classifier — trains EfficientNet-Lite0                |
+| `export_plant_classifier.py` | Plant classifier — exports PyTorch → TFLite                 |
+| `requirements.txt`           | Pinned Python dependencies for reproducible builds          |
+| `.venv/`                     | Python 3.13 virtual environment (training, gitignored)      |
+| `.export_venv/`              | Python 3.12 virtual environment (export, gitignored)        |
+
+---
+
+# Plant Classifier Pipeline
+
+## Background
+
+Monyx also includes an **on-device plant identification** feature for US and Canada species. Unlike the YOLO-based track detection, this uses an **EfficientNet-Lite0 image classifier** — no bounding boxes, just whole-image classification to identify species from photos of leaves, flowers, bark, fruit, or whole plants.
+
+## Pipeline overview
+
+The plant classifier pipeline has four scripts that run in sequence:
+
+### 1. Dataset curation — `build_plant_dataset.py`
+
+Downloads plant images from iNaturalist (research-grade observations, US + Canada only):
+
+```bash
+python tools/build_plant_dataset.py --species 300 --images-per-species 400
+```
+
+- Queries the iNaturalist API for each species (paginates for 400+ images)
+- Prioritises hunter-relevant plants: trees, shrubs, berries, toxic plants
+- Uses ThreadPoolExecutor (10 workers) for concurrent downloads
+- Downloads images into ImageFolder format: `data/plants/train/` + `data/plants/val/`
+- Outputs `assets/models/plant_classes.json`
+
+### 2. Metadata generation — `build_plant_metadata.py`
+
+Builds species metadata for Phase 2 reranking:
+
+```bash
+python tools/build_plant_metadata.py
+```
+
+- Reads `plant_classes.json` for the species list
+- Queries iNaturalist for common names, observation months, and taxonomy
+- Outputs `assets/models/plant_metadata.json` with region, season, plant part, and toxicity data
+
+### 3. Training — `train_plant_classifier.py`
+
+Trains an EfficientNet-Lite0 classifier:
+
+```bash
+python tools/train_plant_classifier.py --epochs 30 --batch-size 32 --label-smoothing 0.1 --mixup-alpha 0.2
+```
+
+- Pretrained ImageNet backbone via `timm`
+- Input: 224×224 RGB, ImageNet mean/std normalisation
+- Augmentation: random crop, rotation, flip, colour jitter, blur, **MixUp** (α=0.2)
+- AdamW + cosine LR schedule, cross-entropy with **label smoothing** (0.1)
+- Saves best checkpoint to `tools/plant_classifier_best.pt`
+- Trained on ~96K train / ~24K val images (299 species, 400 images each)
+- Achieved **72.7% top-1 val accuracy** on Apple Silicon MPS
+
+### 4. Export — `export_plant_classifier.py`
+
+Converts the trained model to TFLite:
+
+```bash
+# Requires Python 3.12 (onnx2tf is not compatible with 3.13)
+tools/.export_venv/bin/python tools/export_plant_classifier.py
+```
+
+- Export chain: PyTorch → ONNX (TorchScript) → TF SavedModel (onnx2tf) → TFLite float16
+- Must use the legacy TorchScript ONNX exporter (dynamo exporter produces incompatible ops)
+- Input: `[1, 224, 224, 3]` NHWC float32
+- Output: `[1, num_species]` logits
+- Copies to `assets/models/plant_classifier_float16.tflite` (~7.5 MB)
+
+### Output files
+
+```
+assets/models/
+  plant_classifier_float16.tflite   — ~7.5 MB, EfficientNet-Lite0
+  plant_classes.json                — {0: "Acer saccharum", 1: "Quercus alba", ...}
+  plant_metadata.json               — species metadata for reranking
+```
+
+### Full pipeline
+
+```bash
+# 1. Create venvs
+python3.13 -m venv tools/.venv          # for training
+python3.12 -m venv tools/.export_venv   # for export (onnx2tf needs 3.12)
+source tools/.venv/bin/activate
+pip install -r tools/requirements.txt
+
+# 2. Download dataset (~1–2 hours for 300 species × 400 images)
+python tools/build_plant_dataset.py --species 300 --images-per-species 400
+
+# 3. Build metadata
+python tools/build_plant_metadata.py
+
+# 4. Train (~15 hours on Apple Silicon MPS, 30 epochs)
+python tools/train_plant_classifier.py --epochs 30 --label-smoothing 0.1 --mixup-alpha 0.2
+
+# 5. Export to TFLite (use Python 3.12 venv)
+tools/.export_venv/bin/pip install -r tools/requirements.txt
+tools/.export_venv/bin/python tools/export_plant_classifier.py
+
+# 6. (Optional) Delete training data — the model + classes + metadata are all that's needed
+rm -rf data/plants/
+```

@@ -182,9 +182,12 @@ class _AnnotatedImage extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    result.traceType == TraceType.footprint ? '🐾' : '💩',
-                    style: const TextStyle(fontSize: 14),
+                  Icon(
+                    result.traceType == TraceType.footprint
+                        ? Icons.pets
+                        : Icons.blur_circular,
+                    color: Colors.orangeAccent,
+                    size: 14,
                   ),
                   const SizedBox(width: 4),
                   Text(
