@@ -49,21 +49,21 @@ class SubscriptionCubit extends Cubit<SubscriptionState> {
   /// Call after SubscriptionService.init() completes.
   Future<void> load() async {
     // todo: uncomment this for a DEMO BUILD: forces Pro for all users
-    // emit(const SubscriptionPro());
-    // return;
+    emit(const SubscriptionPro());
+    return;
 
     // todo: use this for normal build
-    _sub = _service.statusStream.listen((isPro) {
-      if (isPro) {
-        emit(const SubscriptionPro());
-      }
-    });
+    // _sub = _service.statusStream.listen((isPro) {
+    //   if (isPro) {
+    //     emit(const SubscriptionPro());
+    //   }
+    // });
 
-    if (_service.isPro) {
-      emit(const SubscriptionPro());
-    } else {
-      emit(SubscriptionFree(product: _service.proProduct));
-    }
+    // if (_service.isPro) {
+    //   emit(const SubscriptionPro());
+    // } else {
+    //   emit(SubscriptionFree(product: _service.proProduct));
+    // }
   }
 
   /// Kick off the purchase flow.
@@ -85,9 +85,9 @@ class SubscriptionCubit extends Cubit<SubscriptionState> {
   }
 
   // todo: to disable pro rerquirement for testing, uncomment this:
-  // bool get isPro => true;
+  bool get isPro => true;
   // for the real app
-  bool get isPro => state is SubscriptionPro;
+  //bool get isPro => state is SubscriptionPro;
 
   @override
   Future<void> close() {
