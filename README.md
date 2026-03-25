@@ -410,6 +410,7 @@ lib/
     saved_tracks_screen.dart    — List of saved track identification results
     plant_result_screen.dart    — Full-screen plant ID results (photo + species list)
     saved_plants_screen.dart    — List of saved plant identification results
+    saved_hike_tracks_screen.dart — List of saved hike tracks
   models/
     rifle_profile.dart          — Rifle + ammo data classes + JSON
     weather_data.dart           — Open-Meteo response model
@@ -418,6 +419,7 @@ lib/
     track_result.dart           — Saved track identification result
     plant_result.dart           — PlantPart enum, PlantPrediction, PlantResult
     plant_metadata.dart         — Species metadata model for reranking
+    hike_track.dart             — HikePoint + HikeTrack data classes
   ballistics/
     drag_tables.dart            — G1/G7 Cd-vs-Mach tables + PCHIP spline interpolation
     atmosphere.dart             — CIPM-2007 air density, speed of sound, lapse-rate AtmoState
@@ -435,12 +437,14 @@ lib/
     plant_service.dart          — Hive persistence for saved plant results
     plant_reranker.dart         — Metadata-based reranking (region, season, part)
     region_lookup.dart          — Offline GPS → US state / CA province lookup
+    hike_track_service.dart     — Hive persistence for saved hike tracks
   blocs/
     profile_cubit.dart          — Profile load/save/switch state (multi-profile)
     solution_cubit.dart         — Shot solution computation state
     subscription_cubit.dart     — Free/Pro subscription state
     track_cubit.dart            — Track identification flow state
     plant_cubit.dart            — Plant identification flow state
+    hike_track_cubit.dart       — Hike recording state machine (background GPS)
   widgets/
     solution_card.dart          — Bottom sheet with corrections
     detection_image_painter.dart — Bounding-box overlay painter for track photos
@@ -655,3 +659,48 @@ Region lookup is fully offline — uses a bundled US state / Canadian province b
 | Results UI  | `lib/screens/plant_result_screen.dart` | Photo + ranked species list with confidence bars             |
 | Saved list  | `lib/screens/saved_plants_screen.dart` | Browse and revisit past identifications                      |
 | Metadata    | `lib/models/plant_metadata.dart`       | Species metadata model (regions, months, parts, toxicity)    |
+
+## Hike Tracking
+
+Pro subscribers can record GPS hike tracks — even with the app in the background. Points are saved only when the user moves ≥2 m from the previous point (haversine filter), keeping storage minimal while maintaining path fidelity.
+
+### How it works
+
+1. Tap the **🥾 hike button** on the map screen (Pro only — free users see a locked icon with an upgrade prompt).
+2. The app requests "always" location permission (needed for background tracking).
+3. **iOS** shows a blue status bar indicator; **Android** shows a persistent notification ("Monyx — Tracking Hike").
+4. Walk — footstep icons appear along the path on the map in real time.
+5. A **recording banner** at the top of the map shows live distance and elapsed time.
+6. Tap the banner or button to **pause** (stops GPS stream, freezes timer) or **stop** (finishes recording).
+7. On stop, a **summary sheet** shows: total distance (mi + km), active time, elevation gain/loss (ft + m), average pace. Name the hike and save it.
+8. Saved hikes can be **recalled** from the history menu — the path renders on the map with a summary card.
+
+### Background tracking
+
+| Platform | Mechanism | User indicator |
+| --- | --- | --- |
+| **iOS** | `AppleSettings(allowBackgroundLocationUpdates: true, activityType: fitness)` | Blue location bar in status area |
+| **Android** | `AndroidSettings(foregroundNotificationConfig: ...)` | Persistent notification: "Monyx — Tracking Hike" |
+
+GPS stream continues when the app is minimized or the screen is locked. No internet required — GPS altitude is used for elevation.
+
+### Data filtering
+
+- **Haversine threshold**: New point saved only if ≥2 m from previous point. Filters GPS jitter without losing path detail.
+- **Elevation dead-band**: Altitude changes < 2 m are ignored when computing gain/loss, reducing GPS altitude noise.
+- **Pause/resume**: Paused intervals are excluded from active duration. GPS stream is cancelled during pause to save battery.
+
+### Units
+
+Distances and elevation are shown in dual units — imperial primary with metric in parentheses (e.g., "1.2 mi (1.9 km)", "325 ft (99 m)").
+
+### Architecture
+
+| Component   | File                                          | Role                                                    |
+| ----------- | --------------------------------------------- | ------------------------------------------------------- |
+| Model       | `lib/models/hike_track.dart`                  | HikePoint + HikeTrack data classes with JSON            |
+| Persistence | `lib/services/hike_track_service.dart`        | Hive-based save/load/delete for hike tracks             |
+| State       | `lib/blocs/hike_track_cubit.dart`             | Recording state machine with background GPS stream      |
+| Map path    | `lib/screens/map_screen.dart`                 | GeoJSON source + footstep symbol layer on Mapbox        |
+| Saved list  | `lib/screens/saved_hike_tracks_screen.dart`   | Browse and revisit past hikes                           |
+| Haversine   | `lib/ballistics/conversions.dart`             | `haversineMeters()` for 2 m threshold check             |

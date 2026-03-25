@@ -55,10 +55,14 @@
 	<string>Monyx accesses your photo library so you can select track images for species identification.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Monyx saves annotated track identification images to your photo library.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Monyx needs your location to plot you on the map and compute ballistic solutions.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Monyx needs your location to plot you on the map and compute ballistic solutions.</string>
+	<string>Monyx uses your location to plot you on the map, compute ballistic solutions, and record your hiking path — even when the app is in the background.</string>
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-8357274860394786~6932367408</string>
 	<key>UILaunchStoryboardName</key>

@@ -7,6 +7,7 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
+import 'blocs/hike_track_cubit.dart';
 import 'blocs/plant_cubit.dart';
 import 'blocs/profile_cubit.dart';
 import 'blocs/solution_cubit.dart';
@@ -15,6 +16,7 @@ import 'blocs/track_cubit.dart';
 import 'config.dart';
 import 'screens/map_screen.dart';
 import 'services/elevation_service.dart';
+import 'services/hike_track_service.dart';
 import 'services/plant_classifier.dart';
 import 'services/plant_reranker.dart';
 import 'services/plant_service.dart';
@@ -76,6 +78,9 @@ class MonyxApp extends StatelessWidget {
             service: PlantService(),
             reranker: PlantReranker(),
           ),
+        ),
+        BlocProvider(
+          create: (_) => HikeTrackCubit(service: HikeTrackService()),
         ),
       ],
       child: MaterialApp(

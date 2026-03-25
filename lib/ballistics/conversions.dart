@@ -67,6 +67,11 @@ double shotAngleDeg(double horizontalYards, double elevDiffFt) {
   return (headwind, crosswind);
 }
 
+/// Haversine distance between two lat/lon points in meters.
+double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
+  return haversineYards(lat1, lon1, lat2, lon2) * 0.9144;
+}
+
 /// Convert meters to feet.
 double metersToFeet(double meters) => meters * 3.28084;
 

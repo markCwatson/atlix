@@ -14,11 +14,13 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart'
     hide Size, ImageSource;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../blocs/hike_track_cubit.dart';
 import '../blocs/profile_cubit.dart';
 import '../blocs/solution_cubit.dart';
 import '../blocs/subscription_cubit.dart';
 import '../blocs/plant_cubit.dart';
 import '../blocs/track_cubit.dart';
+import '../models/hike_track.dart';
 import '../models/plant_result.dart';
 import '../models/poi.dart';
 import '../models/shot_solution.dart';
@@ -36,7 +38,9 @@ import '../widgets/compass_overlay.dart';
 import '../widgets/solution_card.dart';
 import '../widgets/wind_overlay.dart';
 import 'plant_result_screen.dart';
+import 'hike_summary_screen.dart';
 import 'profile_list_screen.dart';
+import 'saved_hike_tracks_screen.dart';
 import 'saved_plants_screen.dart';
 import 'saved_tracks_screen.dart';
 import 'saved_weather_screen.dart';
@@ -90,6 +94,10 @@ class _MapScreenState extends State<MapScreen> {
   bool _windPickLocation = false; // true while user is tapping a wind location
   DateTime? _windForecastTime; // non-null when "Later" flow is active
 
+  // ── Hike tracking state ───────────────────────────────────────────
+  bool _hikeTrackLayerReady = false; // true once GeoJSON source + layers exist
+  StreamSubscription<HikeTrackState>? _hikeTrackSub;
+
   @override
   void initState() {
     super.initState();
@@ -138,6 +146,27 @@ class _MapScreenState extends State<MapScreen> {
         if (mounted) setState(() => _bannerAd = null);
       }
     });
+    // Listen for hike track state changes to update the path on the map
+    _hikeTrackSub = context.read<HikeTrackCubit>().stream.listen((state) {
+      if (!mounted) return;
+      if (state is HikeTrackRecording) {
+        _updateHikeTrackPath(state.points);
+        setState(() {});
+      } else if (state is HikeTrackPaused) {
+        setState(() {});
+      } else if (state is HikeTrackStopped) {
+        _updateHikeTrackPath(state.track.points);
+        setState(() {});
+        _openHikeSummary(state.track);
+      } else if (state is HikeTrackViewing) {
+        _updateHikeTrackPath(state.track.points);
+        setState(() {});
+        _openHikeSummary(state.track, viewOnly: true);
+      } else if (state is HikeTrackIdle) {
+        _clearHikeTrackPath();
+        setState(() {});
+      }
+    });
   }
 
   @override
@@ -145,6 +174,7 @@ class _MapScreenState extends State<MapScreen> {
     _compassSub?.cancel();
     _positionSub?.cancel();
     _subSub?.cancel();
+    _hikeTrackSub?.cancel();
     _bannerAd?.dispose();
     super.dispose();
   }
@@ -857,6 +887,80 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  // ── Hike track path rendering ─────────────────────────────────────
+
+  String _pointsGeoJson(List<HikePoint> points) {
+    final features = points
+        .map(
+          (p) =>
+              '{"type":"Feature","geometry":{"type":"Point","coordinates":[${p.lon},${p.lat}]},"properties":{}}',
+        )
+        .join(',');
+    return '{"type":"FeatureCollection","features":[$features]}';
+  }
+
+  Future<void> _updateHikeTrackPath(List<HikePoint> points) async {
+    if (_mapboxMap == null || points.length < 2) return;
+
+    final coords = points.map((p) => Position(p.lon, p.lat)).toList();
+    final lineString = LineString(coordinates: coords);
+    final geojson =
+        '{"type":"Feature","geometry":${lineString.toJson()},"properties":{}}';
+
+    if (!_hikeTrackLayerReady) {
+      // Create source + layers the first time
+      await _mapboxMap!.style.addSource(
+        GeoJsonSource(id: 'hike-track-source', data: geojson),
+      );
+      // Thin semi-transparent line as backbone
+      await _mapboxMap!.style.addLayer(
+        LineLayer(
+          id: 'hike-track-line',
+          sourceId: 'hike-track-source',
+          lineColor: Colors.teal.toARGB32(),
+          lineWidth: 3.0,
+          lineOpacity: 0.5,
+        ),
+      );
+      // Point markers along the path (circle layer on a separate point source)
+      await _mapboxMap!.style.addSource(
+        GeoJsonSource(id: 'hike-track-pts', data: _pointsGeoJson(points)),
+      );
+      await _mapboxMap!.style.addLayer(
+        CircleLayer(
+          id: 'hike-track-circles',
+          sourceId: 'hike-track-pts',
+          circleRadius: 4.0,
+          circleColor: Colors.teal.toARGB32(),
+          circleStrokeWidth: 1.5,
+          circleStrokeColor: Colors.white.toARGB32(),
+          circleOpacity: 0.9,
+        ),
+      );
+      _hikeTrackLayerReady = true;
+    } else {
+      // Update existing source data
+      final source =
+          await _mapboxMap!.style.getSource('hike-track-source')
+              as GeoJsonSource;
+      await source.updateGeoJSON(geojson);
+      final ptSource =
+          await _mapboxMap!.style.getSource('hike-track-pts') as GeoJsonSource;
+      await ptSource.updateGeoJSON(_pointsGeoJson(points));
+    }
+  }
+
+  Future<void> _clearHikeTrackPath() async {
+    if (!_hikeTrackLayerReady || _mapboxMap == null) return;
+    try {
+      await _mapboxMap!.style.removeStyleLayer('hike-track-circles');
+      await _mapboxMap!.style.removeStyleLayer('hike-track-line');
+      await _mapboxMap!.style.removeStyleSource('hike-track-pts');
+      await _mapboxMap!.style.removeStyleSource('hike-track-source');
+    } catch (_) {}
+    _hikeTrackLayerReady = false;
+  }
+
   void _showPoiDetail(Poi poi, String annotationId) {
     showModalBottomSheet(
       context: context,
@@ -1319,6 +1423,25 @@ class _MapScreenState extends State<MapScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      // Weather / Wind
+                      _windButton(),
+                      const SizedBox(height: 8),
+                      // Hike tracking
+                      BlocBuilder<HikeTrackCubit, HikeTrackState>(
+                        builder: (context, hikeState) {
+                          final isPro = context
+                              .watch<SubscriptionCubit>()
+                              .isPro;
+                          return _hikeTrackButton(
+                            isPro: isPro,
+                            hikeState: hikeState,
+                            onTap: () => isPro
+                                ? _handleHikeButtonTap(context, hikeState)
+                                : _showUpgradeSheet(context),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 8),
                       // Plant ID
                       BlocConsumer<PlantCubit, PlantState>(
                         listenWhen: (prev, curr) =>
@@ -1540,14 +1663,89 @@ class _MapScreenState extends State<MapScreen> {
                   ),
 
                 // Zoom controls + compass + my location (right side)
+
+                // Hike recording banner (top, below wind badge area)
+                BlocBuilder<HikeTrackCubit, HikeTrackState>(
+                  builder: (context, hikeState) {
+                    if (hikeState is HikeTrackRecording ||
+                        hikeState is HikeTrackPaused) {
+                      final isRecording = hikeState is HikeTrackRecording;
+                      final double dist;
+                      final int secs;
+                      if (hikeState is HikeTrackRecording) {
+                        dist = hikeState.distanceMeters;
+                        secs = hikeState.activeDurationSeconds;
+                      } else {
+                        final p = hikeState as HikeTrackPaused;
+                        dist = p.distanceMeters;
+                        secs = p.activeDurationSeconds;
+                      }
+                      final h = secs ~/ 3600;
+                      final m = (secs % 3600) ~/ 60;
+                      final s = secs % 60;
+                      final timeStr =
+                          '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+                      final distMi = dist * 0.000621371;
+                      final distStr = distMi >= 0.1
+                          ? '${distMi.toStringAsFixed(1)} mi'
+                          : '${dist.round()} m';
+                      return Positioned(
+                        top:
+                            MediaQuery.of(context).padding.top +
+                            (_windEnabled ? 82 : 52),
+                        left: 12,
+                        child: GestureDetector(
+                          onTap: () => _handleHikeButtonTap(context, hikeState),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isRecording
+                                  ? Colors.teal.withAlpha(220)
+                                  : Colors.amber.withAlpha(220),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  isRecording
+                                      ? Icons.fiber_manual_record
+                                      : Icons.pause,
+                                  color: isRecording
+                                      ? Colors.redAccent
+                                      : Colors.black87,
+                                  size: 12,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '$distStr  •  $timeStr',
+                                  style: TextStyle(
+                                    color: isRecording
+                                        ? Colors.white
+                                        : Colors.black87,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
+
                 Positioned(
                   right: 12,
                   bottom: MediaQuery.of(context).padding.bottom + 5,
                   child: Column(
                     children: [
                       _compassButton(),
-                      const SizedBox(height: 8),
-                      _windButton(),
                       const SizedBox(height: 8),
                       _mapButton(Icons.my_location, _flyToUser),
                       const SizedBox(height: 8),
@@ -2816,6 +3014,290 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  void _openSavedHikeTracks(BuildContext context) {
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).popUntil((route) => route is! PopupRoute);
+    Navigator.of(this.context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider.value(
+          value: this.context.read<HikeTrackCubit>(),
+          child: const SavedHikeTracksScreen(),
+        ),
+      ),
+    );
+  }
+
+  // ── Hike tracking UI helpers ──────────────────────────────────────
+
+  Widget _hikeTrackButton({
+    required bool isPro,
+    required HikeTrackState hikeState,
+    required VoidCallback onTap,
+  }) {
+    final isRecording = hikeState is HikeTrackRecording;
+    final isPaused = hikeState is HikeTrackPaused;
+    final isActive = isRecording || isPaused;
+
+    Color bgColor;
+    if (!isPro) {
+      bgColor = Colors.grey[800]!;
+    } else if (isRecording) {
+      bgColor = Colors.teal;
+    } else if (isPaused) {
+      bgColor = Colors.amber;
+    } else {
+      bgColor = Colors.black87;
+    }
+
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: FloatingActionButton(
+        heroTag: 'hike_track',
+        mini: true,
+        backgroundColor: bgColor,
+        onPressed: onTap,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(
+              Icons.directions_walk,
+              color: isActive
+                  ? Colors.white
+                  : (isPro ? Colors.teal : Colors.white38),
+              size: 20,
+            ),
+            if (!isPro)
+              const Positioned(
+                right: -2,
+                bottom: -2,
+                child: Icon(Icons.lock, color: Colors.white54, size: 10),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _handleHikeButtonTap(BuildContext context, HikeTrackState hikeState) {
+    final cubit = context.read<HikeTrackCubit>();
+
+    if (hikeState is HikeTrackIdle || hikeState is HikeTrackError) {
+      _showHikeStartConfirm(context, cubit);
+      return;
+    }
+
+    if (hikeState is HikeTrackRecording) {
+      _showHikeControlSheet(
+        context,
+        isRecording: true,
+        onPause: cubit.pause,
+        onStop: cubit.stop,
+      );
+      return;
+    }
+
+    if (hikeState is HikeTrackPaused) {
+      _showHikeControlSheet(
+        context,
+        isRecording: false,
+        onResume: cubit.resume,
+        onStop: cubit.stop,
+        onDiscard: () {
+          cubit.discard();
+          Navigator.pop(context);
+        },
+      );
+      return;
+    }
+  }
+
+  void _showHikeStartConfirm(BuildContext context, HikeTrackCubit cubit) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Start Hike?',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'GPS tracking will begin in the background.',
+                style: TextStyle(color: Colors.white54, fontSize: 14),
+              ),
+              const SizedBox(height: 20),
+              _hikeActionTile(
+                icon: Icons.play_arrow,
+                label: 'Start Tracking',
+                color: Colors.teal,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  cubit.start();
+                },
+              ),
+              const SizedBox(height: 8),
+              _hikeActionTile(
+                icon: Icons.close,
+                label: 'Cancel',
+                color: Colors.white38,
+                onTap: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showHikeControlSheet(
+    BuildContext context, {
+    required bool isRecording,
+    VoidCallback? onPause,
+    VoidCallback? onResume,
+    required VoidCallback onStop,
+    VoidCallback? onDiscard,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                isRecording ? 'Recording Hike' : 'Hike Paused',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 20),
+              if (isRecording && onPause != null)
+                _hikeActionTile(
+                  icon: Icons.pause,
+                  label: 'Pause',
+                  color: Colors.amber,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onPause();
+                  },
+                ),
+              if (!isRecording && onResume != null)
+                _hikeActionTile(
+                  icon: Icons.play_arrow,
+                  label: 'Resume',
+                  color: Colors.teal,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onResume();
+                  },
+                ),
+              const SizedBox(height: 8),
+              _hikeActionTile(
+                icon: Icons.stop,
+                label: 'End',
+                color: Colors.redAccent,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  onStop();
+                },
+              ),
+              if (onDiscard != null) ...[
+                const SizedBox(height: 8),
+                _hikeActionTile(
+                  icon: Icons.delete_outline,
+                  label: 'Discard',
+                  color: Colors.white38,
+                  onTap: onDiscard,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _hikeActionTile({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: color),
+      title: Text(label, style: TextStyle(color: color)),
+      onTap: onTap,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      tileColor: Colors.grey[800],
+    );
+  }
+
+  void _openHikeSummary(HikeTrack track, {bool viewOnly = false}) {
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => HikeSummaryScreen(
+              track: track,
+              viewOnly: viewOnly,
+              onSave: viewOnly
+                  ? null
+                  : (name) async {
+                      await context.read<HikeTrackCubit>().save(name);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Hike saved'),
+                            backgroundColor: Colors.teal,
+                          ),
+                        );
+                      }
+                    },
+              onDiscard: viewOnly
+                  ? null
+                  : () {
+                      context.read<HikeTrackCubit>().discard();
+                    },
+              onRename: viewOnly
+                  ? (name) async {
+                      await context.read<HikeTrackCubit>().renameSaved(
+                        track.id,
+                        name,
+                      );
+                    }
+                  : null,
+            ),
+          ),
+        )
+        .then((_) {
+          // When returning from the summary, clear the viewed track if in view mode
+          if (viewOnly && mounted) {
+            context.read<HikeTrackCubit>().clear();
+          }
+        });
+  }
+
   void _showHistoryPicker(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -2839,30 +3321,6 @@ class _MapScreenState extends State<MapScreen> {
               ),
               const SizedBox(height: 16),
               ListTile(
-                leading: const Icon(Icons.pets, color: Colors.orangeAccent),
-                title: const Text(
-                  'Animal Tracks',
-                  style: TextStyle(color: Colors.white),
-                ),
-                trailing: const Icon(
-                  Icons.chevron_right,
-                  color: Colors.white38,
-                ),
-                onTap: () => _openSavedTracks(ctx),
-              ),
-              ListTile(
-                leading: const Icon(Icons.local_florist, color: Colors.green),
-                title: const Text(
-                  'Plant IDs',
-                  style: TextStyle(color: Colors.white),
-                ),
-                trailing: const Icon(
-                  Icons.chevron_right,
-                  color: Colors.white38,
-                ),
-                onTap: () => _openSavedPlants(ctx),
-              ),
-              ListTile(
                 leading: const Icon(Icons.air, color: Colors.blue),
                 title: const Text(
                   'Weather Profiles',
@@ -2879,6 +3337,42 @@ class _MapScreenState extends State<MapScreen> {
                   ).popUntil((route) => route is! PopupRoute);
                   _openSavedWeather();
                 },
+              ),
+              ListTile(
+                leading: const Icon(Icons.directions_walk, color: Colors.teal),
+                title: const Text(
+                  'Hike Tracks',
+                  style: TextStyle(color: Colors.white),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white38,
+                ),
+                onTap: () => _openSavedHikeTracks(ctx),
+              ),
+              ListTile(
+                leading: const Icon(Icons.local_florist, color: Colors.green),
+                title: const Text(
+                  'Plant IDs',
+                  style: TextStyle(color: Colors.white),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white38,
+                ),
+                onTap: () => _openSavedPlants(ctx),
+              ),
+              ListTile(
+                leading: const Icon(Icons.pets, color: Colors.orangeAccent),
+                title: const Text(
+                  'Animal Tracks',
+                  style: TextStyle(color: Colors.white),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white38,
+                ),
+                onTap: () => _openSavedTracks(ctx),
               ),
             ],
           ),
