@@ -119,23 +119,30 @@ class _WindPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..strokeWidth = 1.5
+    final trailPaint = Paint()
+      ..strokeWidth = 2.0
       ..strokeCap = StrokeCap.round;
 
+    final dotPaint = Paint();
+
     for (final p in particles) {
-      final alpha = (p.opacity * 0.55).clamp(0.0, 1.0);
+      final alpha = (p.opacity * 0.65).clamp(0.0, 1.0);
       if (alpha < 0.01) continue;
 
-      paint.color = Colors.white.withValues(alpha: alpha);
+      // Extend the trail behind the head by 3× the single-frame delta
+      final dx = p.x - p.prevX;
+      final dy = p.y - p.prevY;
+      final tailX = p.x - dx * 3.0;
+      final tailY = p.y - dy * 3.0;
 
-      // Draw a short trail line from previous to current position
-      canvas.drawLine(Offset(p.prevX, p.prevY), Offset(p.x, p.y), paint);
+      trailPaint.color = Colors.white.withValues(alpha: alpha);
+      canvas.drawLine(Offset(tailX, tailY), Offset(p.x, p.y), trailPaint);
+
       // Bright dot at the head
-      paint.color = Colors.white.withValues(
+      dotPaint.color = Colors.white.withValues(
         alpha: (alpha * 1.3).clamp(0.0, 1.0),
       );
-      canvas.drawCircle(Offset(p.x, p.y), 1.0, paint);
+      canvas.drawCircle(Offset(p.x, p.y), 1.2, dotPaint);
     }
   }
 

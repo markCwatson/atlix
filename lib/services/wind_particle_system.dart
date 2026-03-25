@@ -11,6 +11,7 @@ class WindParticleSystem {
   final int maxParticles;
   final Random _rng = Random();
   final List<Particle> _particles = [];
+  bool _seeded = false;
 
   WindParticleSystem({this.maxParticles = 600});
 
@@ -48,9 +49,11 @@ class WindParticleSystem {
 
     // Spawn new particles to fill the pool
     final deficit = maxParticles - _particles.length;
+    final scatter = !_seeded;
     for (var i = 0; i < deficit; i++) {
-      _particles.add(_spawn(screenSize, windScreenAngleRad));
+      _particles.add(_spawn(screenSize, windScreenAngleRad, scatter: scatter));
     }
+    _seeded = true;
   }
 
   /// Offset all particles by a screen-space delta (e.g. when the map pans).
@@ -61,7 +64,10 @@ class WindParticleSystem {
     }
   }
 
-  void clear() => _particles.clear();
+  void clear() {
+    _particles.clear();
+    _seeded = false;
+  }
 
   // ── private ──────────────────────────────────────────────────────────
 
@@ -74,7 +80,16 @@ class WindParticleSystem {
   }
 
   /// Spawn a particle along the upwind edge of the screen so it flows inward.
-  Particle _spawn(Size size, double windAngleRad) {
+  /// When [scatter] is true (initial fill), place it randomly across the screen.
+  Particle _spawn(Size size, double windAngleRad, {bool scatter = false}) {
+    if (scatter) {
+      final x = _rng.nextDouble() * size.width;
+      final y = _rng.nextDouble() * size.height;
+      final maxAge = 3.0 + _rng.nextDouble() * 4.0;
+      final age = _rng.nextDouble() * maxAge; // spread across full lifetime
+      return Particle(x: x, y: y, age: age, maxAge: maxAge);
+    }
+
     // Normalised wind direction components (unit vector — towards direction)
     final wx = cos(windAngleRad);
     final wy = sin(windAngleRad);
