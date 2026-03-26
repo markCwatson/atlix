@@ -33,6 +33,7 @@ class _OfflineRegionsScreenState extends State<OfflineRegionsScreen> {
   // The bounds that will actually be downloaded — updated as user pans/zooms
   List<double>? _downloadBounds;
   MapboxMap? _previewMap;
+  bool _forceOffline = false;
 
   @override
   void initState() {
@@ -41,6 +42,17 @@ class _OfflineRegionsScreenState extends State<OfflineRegionsScreen> {
         ? List<double>.from(widget.currentBounds!)
         : null;
     _loadRegions();
+    _loadOfflineSwitch();
+  }
+
+  Future<void> _loadOfflineSwitch() async {
+    final connected = await OfflineSwitch.shared.isMapboxStackConnected;
+    if (mounted) setState(() => _forceOffline = !connected);
+  }
+
+  Future<void> _toggleForceOffline(bool value) async {
+    await OfflineSwitch.shared.setMapboxStackConnected(!value);
+    setState(() => _forceOffline = value);
   }
 
   @override
@@ -112,8 +124,8 @@ class _OfflineRegionsScreenState extends State<OfflineRegionsScreen> {
       await _service.downloadRegion(
         id: id,
         bounds: bounds,
-        minZoom: 0,
-        maxZoom: 14,
+        minZoom: 10,
+        maxZoom: 16,
         onProgress: (completed, required, bytes) {
           if (mounted) {
             setState(() {
@@ -186,6 +198,65 @@ class _OfflineRegionsScreenState extends State<OfflineRegionsScreen> {
     } catch (_) {}
   }
 
+  Future<void> _clearCache() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text(
+          'Clear Tile Cache',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'This clears the ambient tile cache (tiles cached during '
+          'normal browsing). Your explicitly downloaded regions will '
+          'need to be re-downloaded.\n\n'
+          'Use this to verify offline downloads work correctly.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Clear',
+              style: TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await _service.clearAllData();
+      _loadRegions();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Cache cleared. Re-download regions for offline use.',
+            ),
+            backgroundColor: Colors.teal,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to clear cache: $e'),
+            backgroundColor: Colors.red[700],
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _deleteRegion(OfflineRegionInfo region) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -240,10 +311,69 @@ class _OfflineRegionsScreenState extends State<OfflineRegionsScreen> {
         title: const Text('Offline Maps'),
         backgroundColor: Colors.grey[850],
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_sweep),
+            tooltip: 'Clear all map data',
+            onPressed: _clearCache,
+          ),
+        ],
       ),
       body: SafeArea(
         child: Column(
           children: [
+            // ── Force Offline toggle ─────────────────────────────────
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: _forceOffline ? Colors.red[900] : Colors.grey[850],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _forceOffline ? Icons.airplanemode_active : Icons.wifi,
+                    color: _forceOffline ? Colors.redAccent : Colors.white54,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _forceOffline
+                              ? 'Offline Mode Active'
+                              : 'Force Offline',
+                          style: TextStyle(
+                            color: _forceOffline
+                                ? Colors.redAccent
+                                : Colors.white70,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          _forceOffline
+                              ? 'Mapbox SDK blocked from network'
+                              : 'Block Mapbox SDK network access to test offline',
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: _forceOffline,
+                    onChanged: _toggleForceOffline,
+                    activeThumbColor: Colors.redAccent,
+                  ),
+                ],
+              ),
+            ),
             // ── Download new region ──────────────────────────────────
             Container(
               margin: const EdgeInsets.all(16),

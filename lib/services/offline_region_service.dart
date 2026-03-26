@@ -155,4 +155,13 @@ class OfflineRegionService {
     await _ensureInit();
     await _tileStore!.removeRegion(id);
   }
+
+  /// Clear all map data — ambient tile cache, tile regions, style packs.
+  /// Everything must be re-downloaded afterwards.
+  Future<void> clearAllData() async {
+    await MapboxMapsOptions.clearData();
+    // clearData invalidates existing TileStore/OfflineManager instances
+    _tileStore = null;
+    _offlineManager = null;
+  }
 }
