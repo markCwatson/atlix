@@ -488,6 +488,7 @@ class _MapScreenState extends State<MapScreen> {
     await _loadSavedPois();
 
     // Load saved lines for the active profile
+    if (!mounted) return;
     final ps = context.read<ProfileCubit>().state;
     if (ps is ProfileLoaded) {
       await _loadSavedLines(profileId: ps.profile.id);
