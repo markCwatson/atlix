@@ -129,8 +129,8 @@ extension _MapScreenPlantId on _MapScreenState {
     context.read<PlantCubit>().capture(
       plantPart,
       source: source,
-      latitude: _userLat,
-      longitude: _userLon,
+      latitude: _effectiveLat,
+      longitude: _effectiveLon,
     );
   }
 

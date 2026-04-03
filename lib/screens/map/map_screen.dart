@@ -110,6 +110,16 @@ class _MapScreenState extends State<MapScreen> {
       .keys
       .toSet();
 
+  // ── Manual location override ──────────────────────────────────────
+  bool _locationOverride = false;
+  bool _locationPickMode = false;
+  double? _overrideLat;
+  double? _overrideLon;
+  PointAnnotation? _overridePin;
+
+  double? get _effectiveLat => _locationOverride ? _overrideLat : _userLat;
+  double? get _effectiveLon => _locationOverride ? _overrideLon : _userLon;
+
   // ── Hike tracking state ───────────────────────────────────────────
   bool _hikeTrackLayerReady = false; // true once GeoJSON source + layers exist
   StreamSubscription<HikeTrackState>? _hikeTrackSub;
@@ -251,15 +261,76 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _flyToUser() async {
-    if (_mapboxMap == null || _userLat == null || _userLon == null) return;
+    final lat = _effectiveLat;
+    final lon = _effectiveLon;
+    if (_mapboxMap == null || lat == null || lon == null) return;
     await _mapboxMap!.flyTo(
       CameraOptions(
-        center: Point(coordinates: Position(_userLon!, _userLat!)),
+        center: Point(coordinates: Position(lon, lat)),
         zoom: 15.0,
         bearing: _compassEnabled && _heading != null ? _heading! : null,
       ),
       MapAnimationOptions(duration: 1500),
     );
+  }
+
+  void _handleMyLocationTap() {
+    if (_locationOverride) {
+      if (_overridePin != null) {
+        _annotationManager?.delete(_overridePin!);
+        _overridePin = null;
+      }
+      setState(() {
+        _locationOverride = false;
+        _overrideLat = null;
+        _overrideLon = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('GPS location restored'),
+          backgroundColor: Colors.teal,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      _flyToUser();
+    } else {
+      _flyToUser();
+    }
+  }
+
+  void _handleMyLocationLongPress() {
+    setState(() => _locationPickMode = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Tap a location on the map to set your position'),
+        backgroundColor: Colors.orangeAccent,
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _handleLocationOverridePick(double lat, double lon) async {
+    // Remove previous override pin if any
+    if (_overridePin != null) {
+      _annotationManager?.delete(_overridePin!);
+      _overridePin = null;
+    }
+    setState(() {
+      _locationPickMode = false;
+      _locationOverride = true;
+      _overrideLat = lat;
+      _overrideLon = lon;
+    });
+    // Drop a pin at the override location
+    _overridePin = await _annotationManager?.create(
+      PointAnnotationOptions(
+        geometry: Point(coordinates: Position(lon, lat)),
+        iconImage: 'override-location',
+        iconSize: 0.8,
+        iconAnchor: IconAnchor.CENTER,
+      ),
+    );
+    _flyToUser();
   }
 
   void _updateMapBearing() {
@@ -310,8 +381,68 @@ class _MapScreenState extends State<MapScreen> {
     // Register custom POI pin images
     await _registerPoiIcons();
 
+    // Register custom override-location pin
+    await _registerOverrideLocationIcon();
+
     // Load saved POIs
     await _loadSavedPois();
+  }
+
+  Future<void> _registerOverrideLocationIcon() async {
+    const double s = 96;
+    const int size = 96;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, s, s));
+    const double cx = s / 2;
+    const double cy = s / 2;
+    const double radius = 40;
+
+    // Outer circle fill
+    canvas.drawCircle(
+      const Offset(cx, cy),
+      radius,
+      Paint()..color = Colors.orangeAccent,
+    );
+
+    // Outer circle stroke
+    canvas.drawCircle(
+      const Offset(cx, cy),
+      radius,
+      Paint()
+        ..color = Colors.black54
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3,
+    );
+
+    // Crosshair icon inside circle
+    const icon = Icons.my_location;
+    final tp = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontSize: 40,
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          color: Colors.white,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset(cx - tp.width / 2, cy - tp.height / 2));
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(size, size);
+    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+
+    await _mapboxMap!.style.addStyleImage(
+      'override-location',
+      2.0,
+      MbxImage(width: size, height: size, data: byteData!.buffer.asUint8List()),
+      false,
+      [],
+      [],
+      null,
+    );
   }
 
   Future<void> _zoomIn() async {
@@ -350,7 +481,9 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     // Check we have user location
-    if (_userLat == null || _userLon == null) {
+    final shooterLat = _effectiveLat;
+    final shooterLon = _effectiveLon;
+    if (shooterLat == null || shooterLon == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Waiting for GPS location...'),
@@ -374,7 +507,7 @@ class _MapScreenState extends State<MapScreen> {
     final line = await _lineManager?.create(
       PolylineAnnotationOptions(
         geometry: LineString(
-          coordinates: [Position(_userLon!, _userLat!), Position(lon, lat)],
+          coordinates: [Position(shooterLon, shooterLat), Position(lon, lat)],
         ),
         lineColor: Colors.red.toARGB32(),
         lineWidth: 6.0,
@@ -390,8 +523,8 @@ class _MapScreenState extends State<MapScreen> {
         _manualHumidity != null;
     cubit.compute(
       profile: profileState.profile,
-      shooterLat: _userLat!,
-      shooterLon: _userLon!,
+      shooterLat: shooterLat,
+      shooterLon: shooterLon,
       targetLat: lat,
       targetLon: lon,
       lineId: line?.id,
@@ -412,8 +545,8 @@ class _MapScreenState extends State<MapScreen> {
 
     // Map the result to this line when it arrives
     if (line != null) {
-      final midLat = (_userLat! + lat) / 2;
-      final midLon = (_userLon! + lon) / 2;
+      final midLat = (shooterLat + lat) / 2;
+      final midLon = (shooterLon + lon) / 2;
       late final StreamSubscription<SolutionState> sub;
       sub = cubit.stream.listen((state) {
         if (state is SolutionReady) {
@@ -441,8 +574,8 @@ class _MapScreenState extends State<MapScreen> {
                   label: labelAnnotation,
                 );
                 _lineEndpoints[line.id] = (
-                  sLat: _userLat!,
-                  sLon: _userLon!,
+                  sLat: shooterLat,
+                  sLon: shooterLon,
                   tLat: lat,
                   tLon: lon,
                 );
@@ -465,6 +598,12 @@ class _MapScreenState extends State<MapScreen> {
     final point = gesture.point;
     final lat = point.coordinates.lat.toDouble();
     final lon = point.coordinates.lng.toDouble();
+
+    // Intercept tap for manual location override picking
+    if (_locationPickMode) {
+      _handleLocationOverridePick(lat, lon);
+      return;
+    }
 
     // Intercept tap for wind location picking
     if (_windPickLocation) {
@@ -546,6 +685,29 @@ class _MapScreenState extends State<MapScreen> {
           Icons.explore,
           color: _compassEnabled ? Colors.black : Colors.white,
           size: 20,
+        ),
+      ),
+    );
+  }
+
+  Widget _myLocationButton() {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: GestureDetector(
+        onLongPress: _handleMyLocationLongPress,
+        child: FloatingActionButton(
+          heroTag: 'my_location',
+          mini: true,
+          backgroundColor: _locationOverride
+              ? Colors.orangeAccent
+              : Colors.black87,
+          onPressed: _handleMyLocationTap,
+          child: Icon(
+            _locationOverride ? Icons.edit_location_alt : Icons.my_location,
+            color: _locationOverride ? Colors.black : Colors.white,
+            size: 20,
+          ),
         ),
       ),
     );
@@ -753,7 +915,12 @@ class _MapScreenState extends State<MapScreen> {
                   key: const ValueKey('mapWidget'),
                   cameraOptions: CameraOptions(
                     center: _locationReady
-                        ? Point(coordinates: Position(_userLon!, _userLat!))
+                        ? Point(
+                            coordinates: Position(
+                              _effectiveLon!,
+                              _effectiveLat!,
+                            ),
+                          )
                         : Point(coordinates: Position(-98.5795, 39.8283)),
                     zoom: _locationReady ? 14.0 : 4.0,
                   ),
@@ -1017,10 +1184,97 @@ class _MapScreenState extends State<MapScreen> {
                   },
                 ),
 
-                // Location-pick mode banner
+                // Location override pick-mode banner
+                if (_locationPickMode)
+                  Positioned(
+                    top: MediaQuery.of(context).padding.top + 67,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orangeAccent,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.edit_location_alt,
+                              color: Colors.black87,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 6),
+                            const Text(
+                              'Tap to set your location',
+                              style: TextStyle(
+                                color: Colors.black87,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () =>
+                                  setState(() => _locationPickMode = false),
+                              child: const Icon(
+                                Icons.close,
+                                color: Colors.black54,
+                                size: 18,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // Location override active badge
+                if (_locationOverride && !_locationPickMode)
+                  Positioned(
+                    top: MediaQuery.of(context).padding.top + 67,
+                    right: 12,
+                    child: GestureDetector(
+                      onTap: _handleMyLocationTap,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orangeAccent,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.edit_location_alt,
+                              color: Colors.black87,
+                              size: 14,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'Manual location',
+                              style: TextStyle(
+                                color: Colors.black87,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // Wind location-pick mode banner
                 if (_windPickLocation)
                   Positioned(
-                    top: MediaQuery.of(context).padding.top + 52,
+                    top: MediaQuery.of(context).padding.top + 67,
                     left: 0,
                     right: 0,
                     child: Center(
@@ -1191,7 +1445,7 @@ class _MapScreenState extends State<MapScreen> {
                     children: [
                       _compassButton(),
                       const SizedBox(height: 8),
-                      _mapButton(Icons.my_location, _flyToUser),
+                      _myLocationButton(),
                       const SizedBox(height: 8),
                       _mapButton(Icons.add, _zoomIn),
                       const SizedBox(height: 8),

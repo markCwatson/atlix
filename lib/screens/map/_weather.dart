@@ -420,8 +420,8 @@ extension _MapScreenWeather on _MapScreenState {
     double? lon,
   }) async {
     if (!context.read<SubscriptionCubit>().isPro) return;
-    final targetLat = useGps ? _userLat : lat;
-    final targetLon = useGps ? _userLon : lon;
+    final targetLat = useGps ? _effectiveLat : lat;
+    final targetLon = useGps ? _effectiveLon : lon;
 
     if (targetLat == null || targetLon == null) {
       ScaffoldMessenger.of(context).showSnackBar(

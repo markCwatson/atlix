@@ -107,8 +107,8 @@ extension _MapScreenTrackId on _MapScreenState {
     context.read<TrackCubit>().capture(
       traceType,
       source: source,
-      latitude: _userLat,
-      longitude: _userLon,
+      latitude: _effectiveLat,
+      longitude: _effectiveLon,
     );
   }
 
