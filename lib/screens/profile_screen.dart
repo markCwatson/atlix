@@ -478,7 +478,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         Gauge.values,
         _gauge,
         (v) => v.label,
-        (v) => setState(() => _gauge = v),
+        (v) => setState(() {
+          _gauge = v;
+          _pelletCount.text = ShotgunSetup.estimatePelletCount(
+            v,
+            _shotSize,
+          ).toString();
+        }),
       ),
       _field('Barrel length (in)', _sgBarrelLength, numeric: true),
 
@@ -508,7 +514,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ShotSize.values,
         _shotSize,
         (v) => v.label,
-        (v) => setState(() => _shotSize = v),
+        (v) => setState(() {
+          _shotSize = v;
+          _pelletCount.text = ShotgunSetup.estimatePelletCount(
+            _gauge,
+            v,
+          ).toString();
+        }),
       ),
       const SizedBox(height: 12),
       _field('Pellet count', _pelletCount, numeric: true, integer: true),

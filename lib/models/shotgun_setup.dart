@@ -139,6 +139,27 @@ class ShotgunSetup extends WeaponProfile {
   // Hunting target
   final GameTarget gameTarget;
 
+  /// Approximate pellet count for a standard payload weight given gauge and
+  /// shot size. Derived from payload weight (oz) / single-pellet weight.
+  ///
+  /// Payload weights: 12 ga → 1.125 oz, 20 ga → 0.875 oz,
+  /// 28 ga → 0.75 oz, .410 → 0.5 oz.
+  static int estimatePelletCount(Gauge gauge, ShotSize size) {
+    // Standard payload weight in ounces (lead, 2¾" shell).
+    final payloadOz = switch (gauge) {
+      Gauge.g12 => 1.125,
+      Gauge.g20 => 0.875,
+      Gauge.g28 => 0.75,
+      Gauge.g410 => 0.5,
+    };
+    // Single lead pellet weight in ounces.
+    // Volume = (4/3)π(d/2)³ in inches; density of lead ≈ 6.544 oz/in³.
+    final r = size.diameterInches / 2.0;
+    final pelletOz = (4.0 / 3.0) * 3.141592653589793 * r * r * r * 6.544;
+    if (pelletOz <= 0) return 1;
+    return (payloadOz / pelletOz).round().clamp(1, 9999);
+  }
+
   ShotgunSetup({
     super.id,
     required super.name,
@@ -224,6 +245,36 @@ class ShotgunSetup extends WeaponProfile {
     gameTarget: json.containsKey('gameTarget')
         ? GameTarget.values.byName(json['gameTarget'] as String)
         : GameTarget.duck,
+  );
+
+  ShotgunSetup copyWith({
+    String? id,
+    String? name,
+    Gauge? gauge,
+    double? barrelLengthInches,
+    ChokeType? chokeType,
+    String? loadName,
+    ShotCategory? shotCategory,
+    ShotSize? shotSize,
+    int? pelletCount,
+    double? muzzleVelocityFps,
+    WadType? wadType,
+    AmmoSpreadClass? ammoSpreadClass,
+    GameTarget? gameTarget,
+  }) => ShotgunSetup(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    gauge: gauge ?? this.gauge,
+    barrelLengthInches: barrelLengthInches ?? this.barrelLengthInches,
+    chokeType: chokeType ?? this.chokeType,
+    loadName: loadName ?? this.loadName,
+    shotCategory: shotCategory ?? this.shotCategory,
+    shotSize: shotSize ?? this.shotSize,
+    pelletCount: pelletCount ?? this.pelletCount,
+    muzzleVelocityFps: muzzleVelocityFps ?? this.muzzleVelocityFps,
+    wadType: wadType ?? this.wadType,
+    ammoSpreadClass: ammoSpreadClass ?? this.ammoSpreadClass,
+    gameTarget: gameTarget ?? this.gameTarget,
   );
 
   @override

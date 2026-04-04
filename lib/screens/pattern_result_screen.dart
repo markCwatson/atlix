@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive/hive.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../blocs/profile_cubit.dart';
 import '../blocs/shotgun_pattern_cubit.dart';
 import '../blocs/subscription_cubit.dart';
 import '../models/pattern_result.dart';
@@ -29,6 +30,10 @@ class PatternResultScreen extends StatefulWidget {
 class _PatternResultScreenState extends State<PatternResultScreen> {
   late double _distanceYards;
   late Set<String> _visibleCircles;
+  late ShotgunSetup _setup;
+  late ShotgunSetup _savedSetup;
+  late PatternResult _result;
+  String? _lineId;
 
   static const _minDistance = 5.0;
   static const _maxDistance = 100.0;
@@ -39,6 +44,14 @@ class _PatternResultScreenState extends State<PatternResultScreen> {
   @override
   void initState() {
     super.initState();
+    _setup = widget.setup;
+    _savedSetup = widget.setup;
+    _result = widget.initialResult;
+    // Capture line context so predict() calls propagate back to the map.
+    final cubitState = context.read<ShotgunPatternCubit>().state;
+    if (cubitState is PatternReady) {
+      _lineId = cubitState.lineId;
+    }
     _distanceYards = widget.initialResult.distanceYards.clamp(
       _minDistance,
       _maxDistance,
@@ -82,8 +95,151 @@ class _PatternResultScreenState extends State<PatternResultScreen> {
   void _onDistanceChanged(double value) {
     setState(() => _distanceYards = value);
     context.read<ShotgunPatternCubit>().predict(
-      setup: widget.setup,
+      setup: _setup,
       distanceYards: value,
+      lineId: _lineId,
+    );
+  }
+
+  void _updateSetup(ShotgunSetup newSetup) {
+    setState(() {
+      _setup = newSetup;
+    });
+    context.read<ShotgunPatternCubit>().predict(
+      setup: newSetup,
+      distanceYards: _distanceYards,
+      lineId: _lineId,
+    );
+  }
+
+  Future<void> _saveToProfile() async {
+    final cubit = context.read<ProfileCubit>();
+    await cubit.save(_setup);
+    if (!mounted) return;
+    setState(() => _savedSetup = _setup);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Profile updated'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _editPelletCount() async {
+    final controller = TextEditingController(
+      text: _setup.pelletCount.toString(),
+    );
+    final result = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text(
+          'Pellet Count',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'e.g. 281',
+            hintStyle: TextStyle(color: Colors.white38),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.white24),
+            ),
+            focusedBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.orangeAccent),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final v = int.tryParse(controller.text);
+              if (v != null && v > 0) Navigator.pop(ctx, v);
+            },
+            child: const Text(
+              'OK',
+              style: TextStyle(color: Colors.orangeAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      _updateSetup(_setup.copyWith(pelletCount: result));
+    }
+  }
+
+  Future<T?> _showEnumPicker<T>({
+    required String title,
+    required List<T> values,
+    required T current,
+    required String Function(T) labelOf,
+  }) {
+    return showModalBottomSheet<T>(
+      context: context,
+      backgroundColor: Colors.grey[850],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.6,
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: values
+                    .map(
+                      (v) => ListTile(
+                        title: Text(
+                          labelOf(v),
+                          style: TextStyle(
+                            color: v == current
+                                ? Colors.orangeAccent
+                                : Colors.white70,
+                            fontWeight: v == current
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                        ),
+                        trailing: v == current
+                            ? const Icon(
+                                Icons.check,
+                                color: Colors.orangeAccent,
+                              )
+                            : null,
+                        onTap: () => Navigator.of(context).pop(v),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
   }
 
@@ -98,7 +254,9 @@ class _PatternResultScreenState extends State<PatternResultScreen> {
       ),
       body: BlocListener<ShotgunPatternCubit, ShotgunPatternState>(
         listener: (context, state) {
-          if (state is CalibrationReady) {
+          if (state is PatternReady) {
+            setState(() => _result = state.result);
+          } else if (state is CalibrationReady) {
             Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => BlocProvider.value(
@@ -122,11 +280,9 @@ class _PatternResultScreenState extends State<PatternResultScreen> {
             );
           }
         },
-        child: BlocBuilder<ShotgunPatternCubit, ShotgunPatternState>(
-          builder: (context, state) {
-            final result = state is PatternReady
-                ? state.result
-                : widget.initialResult;
+        child: Builder(
+          builder: (context) {
+            final result = _result;
             final layout = PelletLayout.fromResult(result);
 
             return Column(
@@ -166,12 +322,118 @@ class _PatternResultScreenState extends State<PatternResultScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Load summary
-                          Text(
-                            '${widget.setup.gauge.label}  ·  ${widget.setup.chokeType.label}  ·  ${widget.setup.shotSize.label}  ·  ${widget.setup.gameTarget.label}',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 13,
+                          // Load summary — tappable chips
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                _setupChip(_setup.gauge.label, () async {
+                                  final v = await _showEnumPicker(
+                                    title: 'Gauge',
+                                    values: Gauge.values,
+                                    current: _setup.gauge,
+                                    labelOf: (g) => g.label,
+                                  );
+                                  if (v != null) {
+                                    final pellets =
+                                        ShotgunSetup.estimatePelletCount(
+                                          v,
+                                          _setup.shotSize,
+                                        );
+                                    _updateSetup(
+                                      _setup.copyWith(
+                                        gauge: v,
+                                        pelletCount: pellets,
+                                      ),
+                                    );
+                                  }
+                                }),
+                                const SizedBox(width: 6),
+                                _setupChip(_setup.chokeType.label, () async {
+                                  final v = await _showEnumPicker(
+                                    title: 'Choke',
+                                    values: ChokeType.values,
+                                    current: _setup.chokeType,
+                                    labelOf: (c) => c.label,
+                                  );
+                                  if (v != null)
+                                    _updateSetup(_setup.copyWith(chokeType: v));
+                                }),
+                                const SizedBox(width: 6),
+                                _setupChip(_setup.shotSize.label, () async {
+                                  final v = await _showEnumPicker(
+                                    title: 'Shot Size',
+                                    values: ShotSize.values,
+                                    current: _setup.shotSize,
+                                    labelOf: (s) => s.label,
+                                  );
+                                  if (v != null) {
+                                    final pellets =
+                                        ShotgunSetup.estimatePelletCount(
+                                          _setup.gauge,
+                                          v,
+                                        );
+                                    _updateSetup(
+                                      _setup.copyWith(
+                                        shotSize: v,
+                                        pelletCount: pellets,
+                                      ),
+                                    );
+                                  }
+                                }),
+                                const SizedBox(width: 6),
+                                _setupChip(_setup.wadType.label, () async {
+                                  final v = await _showEnumPicker(
+                                    title: 'Wad Type',
+                                    values: WadType.values,
+                                    current: _setup.wadType,
+                                    labelOf: (w) => w.label,
+                                  );
+                                  if (v != null)
+                                    _updateSetup(_setup.copyWith(wadType: v));
+                                }),
+                                const SizedBox(width: 6),
+                                _setupChip(
+                                  '${_setup.pelletCount} pellets',
+                                  () => _editPelletCount(),
+                                ),
+                                if (_setup != _savedSetup) ...[
+                                  const SizedBox(width: 6),
+                                  GestureDetector(
+                                    onTap: _saveToProfile,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: Colors.orangeAccent,
+                                        ),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.save,
+                                            size: 14,
+                                            color: Colors.orangeAccent,
+                                          ),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            'Save',
+                                            style: TextStyle(
+                                              color: Colors.orangeAccent,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -218,51 +480,69 @@ class _PatternResultScreenState extends State<PatternResultScreen> {
                           const SizedBox(height: 8),
 
                           // Metrics
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              _togglePill(
-                                'Spread',
-                                '${result.spreadDiameterInches.toStringAsFixed(1)}"',
-                                PatternCircle.spread,
-                              ),
-                              _togglePill(
-                                'R50',
-                                '${result.r50Inches.toStringAsFixed(1)}"',
-                                PatternCircle.r50,
-                              ),
-                              _togglePill(
-                                'R75',
-                                '${result.r75Inches.toStringAsFixed(1)}"',
-                                PatternCircle.r75,
-                              ),
-                              _togglePill(
-                                '10" circle',
-                                '${layout.in10Circle} pellets',
-                                PatternCircle.ref10,
-                              ),
-                              _togglePill(
-                                '20" circle',
-                                '${layout.in20Circle} pellets',
-                                PatternCircle.ref20,
-                              ),
-                              if (result.isCalibrated &&
-                                  (result.poiOffsetXInches.abs() > 0.1 ||
-                                      result.poiOffsetYInches.abs() > 0.1))
-                                _metricPill(
-                                  'POI offset',
-                                  '${result.poiOffsetXInches.toStringAsFixed(1)}" × ${result.poiOffsetYInches.toStringAsFixed(1)}"',
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                _togglePill(
+                                  'Spread',
+                                  '${result.spreadDiameterInches.toStringAsFixed(1)}"',
+                                  PatternCircle.spread,
                                 ),
-                            ],
+                                const SizedBox(width: 8),
+                                _togglePill(
+                                  'R50',
+                                  '${result.r50Inches.toStringAsFixed(1)}"',
+                                  PatternCircle.r50,
+                                ),
+                                const SizedBox(width: 8),
+                                _togglePill(
+                                  'R75',
+                                  '${result.r75Inches.toStringAsFixed(1)}"',
+                                  PatternCircle.r75,
+                                ),
+                                const SizedBox(width: 8),
+                                _togglePill(
+                                  '10" circle',
+                                  '${layout.in10Circle} pellets',
+                                  PatternCircle.ref10,
+                                ),
+                                const SizedBox(width: 8),
+                                _togglePill(
+                                  '20" circle',
+                                  '${layout.in20Circle} pellets',
+                                  PatternCircle.ref20,
+                                ),
+                                if (result.isCalibrated &&
+                                    (result.poiOffsetXInches.abs() > 0.1 ||
+                                        result.poiOffsetYInches.abs() >
+                                            0.1)) ...[
+                                  const SizedBox(width: 8),
+                                  _metricPill(
+                                    'POI offset',
+                                    '${result.poiOffsetXInches.toStringAsFixed(1)}" × ${result.poiOffsetYInches.toStringAsFixed(1)}"',
+                                  ),
+                                ],
+                              ],
+                            ),
                           ),
 
                           const SizedBox(height: 16),
 
-                          // Calibrate button (Pro-gated)
+                          // Bottom button
                           SizedBox(
                             width: double.infinity,
-                            child: _CalibrateButton(setup: widget.setup),
+                            child: _setup != _savedSetup
+                                ? ElevatedButton.icon(
+                                    icon: const Icon(Icons.save, size: 18),
+                                    label: const Text('Save to Profile'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.orangeAccent,
+                                      foregroundColor: Colors.black,
+                                    ),
+                                    onPressed: _saveToProfile,
+                                  )
+                                : _CalibrateButton(setup: _setup),
                           ),
                         ],
                       ),
@@ -272,6 +552,34 @@ class _PatternResultScreenState extends State<PatternResultScreen> {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _setupChip(String label, VoidCallback? onTap) {
+    final tappable = onTap != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.grey[800],
+          borderRadius: BorderRadius.circular(6),
+          border: tappable ? Border.all(color: Colors.white24, width: 1) : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            if (tappable) ...[
+              const SizedBox(width: 4),
+              const Icon(Icons.unfold_more, size: 14, color: Colors.white38),
+            ],
+          ],
         ),
       ),
     );

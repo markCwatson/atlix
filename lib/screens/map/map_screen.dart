@@ -142,6 +142,7 @@ class _MapScreenState extends State<MapScreen> {
   bool _hikeTrackLayerReady = false; // true once GeoJSON source + layers exist
   StreamSubscription<HikeTrackState>? _hikeTrackSub;
   StreamSubscription<ProfileState>? _profileSub;
+  StreamSubscription<ShotgunPatternState>? _patternSub;
 
   @override
   void initState() {
@@ -198,12 +199,29 @@ class _MapScreenState extends State<MapScreen> {
     });
     // Adjust zoom when profile loads/changes (shotgun → closer)
     // Also swap visible lines to match the new profile.
+    String? lastProfileId;
     _profileSub = context.read<ProfileCubit>().stream.listen((state) {
       if (!mounted || _mapboxMap == null) return;
       if (state is ProfileLoaded) {
         _adjustZoomForProfile(state.profile);
-        _clearAllLines();
-        _loadSavedLines(profileId: state.profile.id);
+        // Only clear & reload lines when switching to a different profile.
+        if (state.profile.id != lastProfileId) {
+          lastProfileId = state.profile.id;
+          _clearAllLines();
+          _loadSavedLines(profileId: state.profile.id);
+        }
+      }
+    });
+    // Keep _linePatterns in sync when pattern result screen re-predicts.
+    _patternSub = context.read<ShotgunPatternCubit>().stream.listen((state) {
+      if (!mounted) return;
+      if (state is PatternReady &&
+          state.lineId != null &&
+          _linePatterns.containsKey(state.lineId)) {
+        _linePatterns[state.lineId!] = (
+          result: state.result,
+          setup: state.setup,
+        );
       }
     });
     // Listen for hike track state changes to update the path on the map
@@ -235,6 +253,7 @@ class _MapScreenState extends State<MapScreen> {
     _positionSub?.cancel();
     _subSub?.cancel();
     _hikeTrackSub?.cancel();
+    _patternSub?.cancel();
     _profileSub?.cancel();
     _bannerAd?.dispose();
     super.dispose();
