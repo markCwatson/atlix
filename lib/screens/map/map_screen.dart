@@ -9,6 +9,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart'
     hide Size, ImageSource;
@@ -68,6 +69,7 @@ part '_track_id.dart';
 part '_plant_id.dart';
 part '_poi.dart';
 part '_land_overlay.dart';
+part '_setback_overlay.dart';
 part '_terrain.dart';
 
 class MapScreen extends StatefulWidget {
@@ -132,6 +134,9 @@ class _MapScreenState extends State<MapScreen> {
       .allManagerCategories
       .keys
       .toSet();
+
+  // ── Setback overlay state ─────────────────────────────────────────
+  bool _setbackOverlayEnabled = false;
 
   // ── Manual location override ──────────────────────────────────────
   bool _locationOverride = false;
@@ -1398,6 +1403,16 @@ class _MapScreenState extends State<MapScreen> {
                               .watch<SubscriptionCubit>()
                               .isPro;
                           return _landOverlayButton(isPro: isPro);
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      // Setback (no-hunt zone) overlay
+                      Builder(
+                        builder: (context) {
+                          final isPro = context
+                              .watch<SubscriptionCubit>()
+                              .isPro;
+                          return _setbackOverlayButton(isPro: isPro);
                         },
                       ),
                       const SizedBox(height: 8),

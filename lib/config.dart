@@ -11,4 +11,12 @@ class AppConfig {
     'LAND_TILESET_ID',
     defaultValue: '',
   );
+
+  /// Mapbox tileset ID for the hunting setback (no-hunt zone) overlay.
+  /// Built from buffered building footprints. Set via --dart-define or .env.
+  /// Example: "yourusername.ns_setback_overlay"
+  static const String setbackTilesetId = String.fromEnvironment(
+    'SETBACK_TILESET_ID',
+    defaultValue: '',
+  );
 }

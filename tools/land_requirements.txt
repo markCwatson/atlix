@@ -8,3 +8,6 @@
 #   brew install gdal tippecanoe   (macOS)
 
 requests>=2.32          # HTTP downloads
+geopandas>=0.14         # Geospatial dataframes (setback buffer pipeline)
+shapely>=2.0            # Geometry operations (buffer, dissolve, simplify)
+pyproj>=3.6             # CRS reprojection (WGS84 ↔ UTM)

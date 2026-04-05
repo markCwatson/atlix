@@ -112,6 +112,19 @@ class OfflineRegionService {
       );
     }
 
+    // If a setback (no-hunt zone) tileset is configured, include it
+    final setbackTileset = AppConfig.setbackTilesetId;
+    if (setbackTileset.isNotEmpty) {
+      descriptors.add(
+        TilesetDescriptorOptions(
+          styleURI: '',
+          minZoom: minZoom,
+          maxZoom: maxZoom,
+          tilesets: ['mapbox://$setbackTileset'],
+        ),
+      );
+    }
+
     final loadOptions = TileRegionLoadOptions(
       geometry: geometry,
       descriptorsOptions: descriptors,

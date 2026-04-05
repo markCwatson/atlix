@@ -231,6 +231,7 @@ Detailed documentation for each feature is in the [`docs/`](docs/) folder:
 - **[docs/shotguns.md](docs/shotguns.md)** — Pattern estimation: Rayleigh model, PE tables, modifiers, OpenCV calibration pipeline, effective range
 - **[docs/weather.md](docs/weather.md)** — Wind overlay: particle system, Open-Meteo API, manual/live/forecast modes, saved profiles
 - **[docs/land-overlay.md](docs/land-overlay.md)** — Public/Crown land: data pipeline (CPCAD + provincial open data → tippecanoe → Mapbox), colour-coded map layers, filtering
+- **[docs/setback-overlay.md](docs/setback-overlay.md)** — Hunting setback zones: building footprint buffer pipeline (Microsoft Building Footprints → GeoPandas → tippecanoe → Mapbox), red no-hunt overlay
 - **[docs/track-id.md](docs/track-id.md)** — Animal track ID: YOLOv11n TFLite models (117 footprint + 101 feces species), inference pipeline
 - **[docs/plant-id.md](docs/plant-id.md)** — Plant ID: EfficientNet-Lite0 classifier, metadata reranking (region/season/part)
 - **[docs/hike-tracking.md](docs/hike-tracking.md)** — GPS hike tracking: background location, haversine filtering, elevation gain/loss
