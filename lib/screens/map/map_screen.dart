@@ -68,6 +68,7 @@ part '_track_id.dart';
 part '_plant_id.dart';
 part '_poi.dart';
 part '_land_overlay.dart';
+part '_terrain.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -120,6 +121,10 @@ class _MapScreenState extends State<MapScreen> {
   bool _lineTapped = false; // suppress POI picker when a line is tapped
   bool _windPickLocation = false; // true while user is tapping a wind location
   DateTime? _windForecastTime; // non-null when "Later" flow is active
+
+  // ── 3D terrain state ──────────────────────────────────────────────
+  bool _is3DEnabled = false;
+  double _elevationExaggeration = 1.5;
 
   // ── Land overlay state ────────────────────────────────────────────
   bool _landOverlayEnabled = false;
@@ -1312,7 +1317,7 @@ class _MapScreenState extends State<MapScreen> {
                   onMapCreated: _onMapCreated,
                   onTapListener: _onMapTap,
                   onLongTapListener: _onMapLongTap,
-                  onCameraChangeListener: _windEnabled
+                  onCameraChangeListener: (_windEnabled || _is3DEnabled)
                       ? (_) => _syncCamera()
                       : null,
                 ),
@@ -1868,6 +1873,8 @@ class _MapScreenState extends State<MapScreen> {
                   bottom: MediaQuery.of(context).padding.bottom + 5,
                   child: Column(
                     children: [
+                      _terrainButton(),
+                      const SizedBox(height: 8),
                       _compassButton(),
                       const SizedBox(height: 8),
                       _myLocationButton(),
@@ -1878,6 +1885,20 @@ class _MapScreenState extends State<MapScreen> {
                     ],
                   ),
                 ),
+
+                // Elevation exaggeration slider (3D mode only)
+                if (_is3DEnabled)
+                  Positioned(
+                    right: 12,
+                    bottom:
+                        MediaQuery.of(context).padding.bottom +
+                        5 +
+                        // offset above the right sidebar buttons:
+                        // 5 buttons × 44px + 4 gaps × 8px = 252px
+                        252 +
+                        12,
+                    child: _exaggerationSlider(),
+                  ),
 
                 // Solution computing indicator
                 BlocBuilder<SolutionCubit, SolutionState>(
