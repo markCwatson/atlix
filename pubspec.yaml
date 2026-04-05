@@ -1,7 +1,7 @@
 name: atlix
 description: 'Offline hunting map + ballistics calculator'
 publish_to: 'none'
-version: 1.0.11+1
+version: 1.0.11+2
 
 environment:
   sdk: ^3.11.3
