@@ -106,9 +106,6 @@ void main() {
         expect(expectedFraction, closeTo(pe, 0.01));
 
         // Also verify the engine's pellet count matches
-        // (5pt tolerance for rounding at 1000 pellets)
-        final expectedPellets = (1000 * pe).round();
-        // We need to get pellets in a 30" circle (15" radius) from the result.
         // Use the returned sigma to compute it from R50.
         final resultSigma = r.r50Inches / sqrt(log(4));
         final actualFraction = _rayleighCDF(15.0, resultSigma);
