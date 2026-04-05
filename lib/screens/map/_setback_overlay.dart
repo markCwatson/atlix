@@ -4,16 +4,19 @@ part of 'map_screen.dart';
 
 /// Hunting setback (no-hunt zone) overlay methods for [_MapScreenState].
 ///
-/// Renders a semi-transparent red fill showing areas within the provincial
-/// setback distance of buildings. Built from buffered Microsoft Building
-/// Footprints data, uploaded as a Mapbox vector tileset.
+/// Renders two concentric zone layers around buildings:
+///   RED  (0–182 m)   — all weapons restricted  (NS s.11(3)/(4))
+///   YELLOW (182–402 m) — rifle/slug restricted  (NS s.11(2))
 ///
-/// Nova Scotia: 201 m (660 ft) from any dwelling for all firearms.
+/// Built from buffered Microsoft Building Footprints data, uploaded as a
+/// Mapbox vector tileset. The `zone_type` feature property drives colours.
 extension _MapScreenSetbackOverlay on _MapScreenState {
   // ── Source / layer IDs ──────────────────────────────────────────────
   static const _sourceId = 'setback-overlay-source';
-  static const _fillLayerId = 'setback-overlay-fill';
-  static const _lineLayerId = 'setback-overlay-line';
+  static const _fillAllId = 'setback-fill-all-weapons';
+  static const _lineAllId = 'setback-line-all-weapons';
+  static const _fillRifleId = 'setback-fill-rifle-slug';
+  static const _lineRifleId = 'setback-line-rifle-slug';
   static const _sourceLayerName = 'setback_zone'; // matches tippecanoe -l
 
   // ── Hive key for one-time disclaimer ──────────────────────────────
@@ -35,30 +38,70 @@ extension _MapScreenSetbackOverlay on _MapScreenState {
       );
       debugPrint('[SetbackOverlay] source added: mapbox://$tilesetId');
 
-      // Semi-transparent red fill
+      // ── Red zone: all weapons restricted (0–182 m) ──────────────
       await _mapboxMap!.style.addLayer(
         FillLayer(
-          id: _fillLayerId,
+          id: _fillAllId,
           sourceId: _sourceId,
           sourceLayer: _sourceLayerName,
-          fillColor: const Color(0xFFC62828).toARGB32(),
+          fillColor: const Color(0xFFC62828).toARGB32(), // red
           fillOpacity: 0.25,
         ),
       );
-      debugPrint('[SetbackOverlay] fill layer added');
+      await _mapboxMap!.style.setStyleLayerProperty(_fillAllId, 'filter', [
+        '==',
+        ['get', 'zone_type'],
+        'all_weapons',
+      ]);
 
-      // Boundary line
       await _mapboxMap!.style.addLayer(
         LineLayer(
-          id: _lineLayerId,
+          id: _lineAllId,
           sourceId: _sourceId,
           sourceLayer: _sourceLayerName,
-          lineColor: const Color(0xFFD32F2F).toARGB32(),
+          lineColor: const Color(0xFFD32F2F).toARGB32(), // red
           lineWidth: 1.0,
           lineOpacity: 0.6,
         ),
       );
-      debugPrint('[SetbackOverlay] line layer added');
+      await _mapboxMap!.style.setStyleLayerProperty(_lineAllId, 'filter', [
+        '==',
+        ['get', 'zone_type'],
+        'all_weapons',
+      ]);
+
+      // ── Yellow zone: rifle/slug restricted (182–402 m) ──────────
+      await _mapboxMap!.style.addLayer(
+        FillLayer(
+          id: _fillRifleId,
+          sourceId: _sourceId,
+          sourceLayer: _sourceLayerName,
+          fillColor: const Color(0xFFFFA000).toARGB32(), // amber
+          fillOpacity: 0.20,
+        ),
+      );
+      await _mapboxMap!.style.setStyleLayerProperty(_fillRifleId, 'filter', [
+        '==',
+        ['get', 'zone_type'],
+        'rifle_slug',
+      ]);
+
+      await _mapboxMap!.style.addLayer(
+        LineLayer(
+          id: _lineRifleId,
+          sourceId: _sourceId,
+          sourceLayer: _sourceLayerName,
+          lineColor: const Color(0xFFFFA000).toARGB32(), // amber
+          lineWidth: 1.0,
+          lineOpacity: 0.5,
+        ),
+      );
+      await _mapboxMap!.style.setStyleLayerProperty(_lineRifleId, 'filter', [
+        '==',
+        ['get', 'zone_type'],
+        'rifle_slug',
+      ]);
+
       debugPrint('[SetbackOverlay] all layers added successfully');
     } catch (e) {
       debugPrint('[SetbackOverlay] ERROR adding layers: $e');
@@ -68,12 +111,11 @@ extension _MapScreenSetbackOverlay on _MapScreenState {
   // ── Remove overlay layers ─────────────────────────────────────────
   Future<void> _removeSetbackOverlayLayers() async {
     if (_mapboxMap == null) return;
-    try {
-      await _mapboxMap!.style.removeStyleLayer(_fillLayerId);
-    } catch (_) {}
-    try {
-      await _mapboxMap!.style.removeStyleLayer(_lineLayerId);
-    } catch (_) {}
+    for (final id in [_fillAllId, _lineAllId, _fillRifleId, _lineRifleId]) {
+      try {
+        await _mapboxMap!.style.removeStyleLayer(id);
+      } catch (_) {}
+    }
     try {
       await _mapboxMap!.style.removeStyleSource(_sourceId);
     } catch (_) {}
@@ -168,6 +210,57 @@ extension _MapScreenSetbackOverlay on _MapScreenState {
           ],
         ),
       ),
+    );
+  }
+
+  // ── Map legend (visible when overlay is active) ───────────────────
+  Widget _setbackLegend() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Setback Zones',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _legendRow(const Color(0xFFC62828), 'All weapons (< 182 m)'),
+          const SizedBox(height: 4),
+          _legendRow(const Color(0xFFFFA000), 'Rifle / slug (182–402 m)'),
+        ],
+      ),
+    );
+  }
+
+  Widget _legendRow(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.5),
+            border: Border.all(color: color, width: 1.5),
+            borderRadius: BorderRadius.circular(3),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white70, fontSize: 11),
+        ),
+      ],
     );
   }
 }

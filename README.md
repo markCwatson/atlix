@@ -4,35 +4,35 @@ Offline-first hunting map + ballistics calculator for iOS and Android. Drop a pi
 
 ## Features
 
-| Feature | Free | Pro ($4.99/mo) |
-| --- | --- | --- |
-| Mapbox satellite/topo map + GPS | ✅ | ✅ |
-| Rifle profiles + ballistic solver | 1 profile | Unlimited |
-| Shotgun profiles + pattern estimation | 1 profile | Unlimited |
-| Manual wind entry for ballistics | ✅ | ✅ |
-| Live wind + animated particle overlay | — | ✅ |
-| Animal track/scat ID (YOLOv11) | — | ✅ |
-| Plant ID (EfficientNet-Lite0) | — | ✅ |
-| GPS hike tracking (background) | — | ✅ |
-| Public/Crown land overlay | — | ✅ |
-| Offline map downloads | — | ✅ |
-| Banner ads | Shown | Hidden |
+| Feature                               | Free      | Pro ($4.99/mo) |
+| ------------------------------------- | --------- | -------------- |
+| Mapbox satellite/topo map + GPS       | ✅        | ✅             |
+| Rifle profiles + ballistic solver     | 1 profile | Unlimited      |
+| Shotgun profiles + pattern estimation | 1 profile | Unlimited      |
+| Manual wind entry for ballistics      | ✅        | ✅             |
+| Live wind + animated particle overlay | —         | ✅             |
+| Animal track/scat ID (YOLOv11)        | —         | ✅             |
+| Plant ID (EfficientNet-Lite0)         | —         | ✅             |
+| GPS hike tracking (background)        | —         | ✅             |
+| Public/Crown land overlay             | —         | ✅             |
+| Offline map downloads                 | —         | ✅             |
+| Banner ads                            | Shown     | Hidden         |
 
 ## Tech Stack
 
-| Layer | Tech |
-| --- | --- |
-| UI | Flutter (iOS + Android), single codebase |
-| Maps | Mapbox Maps Flutter SDK (offline support) |
-| State | BLoC / Cubit (`flutter_bloc`) |
-| Local storage | Hive (NoSQL) |
-| GPS | `geolocator` (foreground + background) |
-| Weather / Elevation | Open-Meteo API (free, no key) |
-| Rifle ballistics | Custom Dart 3-DoF RK4 solver (port of pyballistic) |
-| Shotgun patterns | Rayleigh distribution model + OpenCV calibration |
-| ML inference | `tflite_flutter` (YOLOv11n + EfficientNet-Lite0) |
-| Ads | Google AdMob (banner, adaptive) |
-| IAP | `in_app_purchase` (StoreKit / Google Play) |
+| Layer               | Tech                                               |
+| ------------------- | -------------------------------------------------- |
+| UI                  | Flutter (iOS + Android), single codebase           |
+| Maps                | Mapbox Maps Flutter SDK (offline support)          |
+| State               | BLoC / Cubit (`flutter_bloc`)                      |
+| Local storage       | Hive (NoSQL)                                       |
+| GPS                 | `geolocator` (foreground + background)             |
+| Weather / Elevation | Open-Meteo API (free, no key)                      |
+| Rifle ballistics    | Custom Dart 3-DoF RK4 solver (port of pyballistic) |
+| Shotgun patterns    | Rayleigh distribution model + OpenCV calibration   |
+| ML inference        | `tflite_flutter` (YOLOv11n + EfficientNet-Lite0)   |
+| Ads                 | Google AdMob (banner, adaptive)                    |
+| IAP                 | `in_app_purchase` (StoreKit / Google Play)         |
 
 Bundle ID: `dev.markcwatson.atlix`
 
@@ -143,7 +143,7 @@ flutter test test/pattern_engine_test.dart      # Shotgun pattern engine tests o
 
 ```bash
 open -a Simulator                                           # Opens Simulator.app
-xcrun simctl boot "iPhone 15 Pro"                           # Boot a specific device
+xcrun simctl boot "iPhone 17 Pro Max"                           # Boot a specific device
 ```
 
 **Android:**

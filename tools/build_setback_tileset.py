@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Download building footprints, buffer by the provincial setback distance,
-dissolve into a single "no-hunt zone" layer, and generate a Mapbox-compatible
-vector tileset (MBTiles).
+Download building footprints, buffer by provincial setback distances,
+dissolve into zone layers, and generate a Mapbox-compatible vector tileset
+(MBTiles).
 
-PROOF-OF-CONCEPT: Nova Scotia only (201 m setback for all firearms).
+Nova Scotia Firearm and Bow Regulations, Section 11:
+  - s.11(3)/(4): 182 m from any dwelling — all weapons restricted
+  - s.11(2):     402 m from any dwelling — rifle cartridge / slug restricted
+
+The pipeline produces two concentric zones per building:
+  zone_type="all_weapons"  → 0–182 m ring  (red on map)
+  zone_type="rifle_slug"   → 182–402 m ring (yellow on map)
 
 Data source:
     Microsoft Canadian Building Footprints (ODbL license)
@@ -46,12 +52,17 @@ MS_BUILDINGS_BASE = (
     "https://minedbuildings.z5.web.core.windows.net" "/legacy/canadian-buildings-v2"
 )
 
-# Province configs: (download_name, UTM EPSG for accurate buffering, setback_m)
+# Province configs: (download_name, UTM EPSG for accurate buffering, setback zones)
 PROVINCE_CONFIGS: dict[str, dict] = {
     "NS": {
         "zip_name": "NovaScotia",
         "utm_epsg": 32620,  # UTM zone 20N — covers Nova Scotia
-        "setback_m": 201,  # NS Wildlife Act: 201 m (660 ft) for all firearms
+        "zones": [
+            # NS Firearm & Bow Regs s.11(3)/(4): 182 m — all weapons restricted
+            {"distance_m": 182, "zone_type": "all_weapons"},
+            # NS Firearm & Bow Regs s.11(2): 402 m — rifle/slug restricted
+            {"distance_m": 402, "zone_type": "rifle_slug"},
+        ],
     },
 }
 
@@ -144,7 +155,7 @@ def download(province: str = "NS") -> None:
 
 
 def process(province: str = "NS") -> None:
-    """Buffer buildings by setback distance and dissolve into a single layer."""
+    """Buffer buildings by setback distances and produce concentric zone rings."""
     ensure_dirs()
 
     try:
@@ -156,11 +167,11 @@ def process(province: str = "NS") -> None:
         )
 
     cfg = PROVINCE_CONFIGS[province]
-    setback_m = cfg["setback_m"]
     utm_epsg = cfg["utm_epsg"]
+    zones = cfg["zones"]  # sorted inner → outer
 
     buildings_path = RAW_DIR / f"{province.lower()}_buildings.geojson"
-    output_path = PROCESSED_DIR / f"{province.lower()}_setback_{setback_m}m.geojson"
+    output_path = PROCESSED_DIR / f"{province.lower()}_setback_zones.geojson"
 
     if not buildings_path.exists():
         sys.exit(
@@ -182,44 +193,56 @@ def process(province: str = "NS") -> None:
     print(f"  Reprojecting to EPSG:{utm_epsg} (UTM)...")
     gdf = gdf.to_crs(epsg=utm_epsg)
 
-    # Buffer each building by setback distance
-    print(f"  Buffering by {setback_m} m...")
-    gdf["geometry"] = gdf.geometry.buffer(setback_m, resolution=8)
+    # Buffer + dissolve each zone distance (inner first)
+    dissolved_zones: list[tuple[dict, object]] = []  # (zone_cfg, geometry)
+    for zone in sorted(zones, key=lambda z: z["distance_m"]):
+        dist = zone["distance_m"]
+        print(f"  Buffering by {dist} m ({zone['zone_type']})...")
+        buffered = gdf.geometry.buffer(dist, resolution=8)
 
-    # Dissolve all buffers into a single geometry.
-    # Process in chunks to manage memory for large datasets.
-    chunk_size = 50_000
-    n = len(gdf)
-    if n > chunk_size:
-        print(f"  Dissolving in chunks of {chunk_size}...")
-        chunks = []
-        for start in range(0, n, chunk_size):
-            end = min(start + chunk_size, n)
-            print(f"    Chunk {start}–{end}...")
-            chunk_union = unary_union(gdf.geometry.iloc[start:end])
-            chunks.append(chunk_union)
-        print("  Merging chunks...")
-        dissolved = unary_union(chunks)
-    else:
-        print("  Dissolving...")
-        dissolved = unary_union(gdf.geometry)
+        # Dissolve in chunks to manage memory
+        chunk_size = 50_000
+        n = len(buffered)
+        if n > chunk_size:
+            print(f"  Dissolving in chunks of {chunk_size}...")
+            chunks = []
+            for start in range(0, n, chunk_size):
+                end = min(start + chunk_size, n)
+                print(f"    Chunk {start}–{end}...")
+                chunk_union = unary_union(buffered.iloc[start:end])
+                chunks.append(chunk_union)
+            print("  Merging chunks...")
+            dissolved = unary_union(chunks)
+        else:
+            print("  Dissolving...")
+            dissolved = unary_union(buffered)
 
-    # Simplify to reduce vertex count (~5 m tolerance at UTM scale)
-    print("  Simplifying (5 m tolerance)...")
-    dissolved = dissolved.simplify(5.0, preserve_topology=True)
+        # Simplify to reduce vertex count (~5 m tolerance at UTM scale)
+        print(f"  Simplifying (5 m tolerance)...")
+        dissolved = dissolved.simplify(5.0, preserve_topology=True)
+        dissolved_zones.append((zone, dissolved))
 
-    # Build output GeoDataFrame
-    result = gpd.GeoDataFrame(
-        [
+    # Build concentric rings: subtract inner zone from outer zone
+    # zones are sorted inner→outer, so dissolved_zones[0] is the smallest
+    rows = []
+    for i, (zone, geom) in enumerate(dissolved_zones):
+        if i == 0:
+            # Inner-most zone is used as-is (0 → distance_m)
+            ring = geom
+        else:
+            # Subtract the next smaller zone to get a ring
+            _, inner_geom = dissolved_zones[i - 1]
+            ring = geom.difference(inner_geom)
+        rows.append(
             {
-                "zone_type": "setback",
-                "setback_m": setback_m,
+                "zone_type": zone["zone_type"],
+                "distance_m": zone["distance_m"],
                 "province_state": province,
+                "geometry": ring,
             }
-        ],
-        geometry=[dissolved],
-        crs=f"EPSG:{utm_epsg}",
-    )
+        )
+
+    result = gpd.GeoDataFrame(rows, crs=f"EPSG:{utm_epsg}")
 
     # Reproject back to WGS84
     print("  Reprojecting to EPSG:4326...")
@@ -240,10 +263,7 @@ def tiles(province: str = "NS") -> None:
     """Run tippecanoe to generate vector MBTiles from the setback GeoJSON."""
     ensure_dirs()
 
-    cfg = PROVINCE_CONFIGS[province]
-    setback_m = cfg["setback_m"]
-
-    merged = PROCESSED_DIR / f"{province.lower()}_setback_{setback_m}m.geojson"
+    merged = PROCESSED_DIR / f"{province.lower()}_setback_zones.geojson"
     if not merged.exists():
         sys.exit(
             f"Missing {merged}. " f"Run: python tools/build_setback_tileset.py process"
@@ -275,7 +295,7 @@ def tiles(province: str = "NS") -> None:
         "--coalesce-densest-as-needed",
         "--force",  # overwrite existing output
         "-n",
-        f"Setback Overlay ({province} {setback_m}m)",
+        f"Setback Overlay ({province})",
         "-A",
         "Microsoft Building Footprints (ODbL)",
         str(merged),

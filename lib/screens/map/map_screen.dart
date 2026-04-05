@@ -1877,6 +1877,11 @@ class _MapScreenState extends State<MapScreen> {
                                 ),
                               ),
                             ),
+                          // Setback zone legend
+                          if (_setbackOverlayEnabled) ...[
+                            const SizedBox(height: 6),
+                            _setbackLegend(),
+                          ],
                         ],
                       ),
                     );
